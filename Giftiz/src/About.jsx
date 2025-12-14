@@ -14,9 +14,6 @@ function About()
                 <div className="nav-grid">
                     <button onClick={() => navigate("/")}>חזרה לבית</button>
                     <button className="btn-ghost" onClick={() => navigate("/media")}>עיון במוצרים</button>
-                    <button>
-                        somehing
-                    </button>
                 </div>
             </section>
         </main>
