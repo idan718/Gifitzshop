@@ -1,0 +1,27 @@
+[
+  {
+    "id": 4,
+    "name": "idan",
+    "pwd": "$2b$10$xBwsRdMh1bzzPKUy1JXd6u9XavXHqr5X32GxVT5SYEoVOZV9/VHPK",
+    "userEmail": "giftizofficaladmin@gmail.com",
+    "verified": true,
+    "admin": true,
+    "owner": true
+  },
+  {
+    "id": 5,
+    "name": "xcz",
+    "pwd": "$2b$10$hQLlOv4E.tX3c8OQYnSfbu3lvnP0PEov7NwRDgcjTQ4IyKWeyyJq6",
+    "userEmail": "gamil@gmail.com",
+    "admin": true,
+    "verified": true
+  },
+  {
+    "id": 7,
+    "name": "nadav",
+    "pwd": "$2b$10$Hka5tzF/qsslj1XXI4dTmeWusTaBWUhTgt/Nsw5TYByYIGMqPPA0e",
+    "userEmail": "giftizofficaladmin@gmail.com",
+    "admin": true,
+    "verified": true
+  }
+]
