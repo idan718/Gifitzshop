@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import "./App.css";
 import Home from "./Home";
 import About from "./About";
@@ -22,57 +22,78 @@ import PasswordRecovery from "./PasswordRecovery.jsx";
 import PasswordReset from "./PasswordReset.jsx";
 
 function App() {
-  const location = useLocation();
   const navigate = useNavigate();
   const [isLoggedIn, setIsLoggedIn] = useState(() => Boolean(typeof window !== "undefined" && localStorage.getItem("sessionId")));
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
+  const [sessionReady, setSessionReady] = useState(false);
 
-  const fetchAdminStatus = useCallback(async (sessionId) => {
+  const loadSessionRoles = useCallback(async (sessionId) => {
     if (!sessionId) {
       setIsAdmin(false);
-      return;
+      setIsOwner(false);
+      return { admin: false, owner: false };
     }
+
     try {
       const res = await fetch(`http://localhost:3001/sessions/${sessionId}/admin`);
       if (!res.ok) {
         throw new Error("Unable to fetch admin status");
       }
       const data = await res.json();
-      setIsAdmin(Boolean(data.admin));
+      const adminFlag = Boolean(data.admin);
+      const ownerFlag = Boolean(data.owner);
+      setIsAdmin(adminFlag);
+      setIsOwner(ownerFlag);
+      return { admin: adminFlag, owner: ownerFlag };
     } catch (error) {
       setIsAdmin(false);
+      setIsOwner(false);
+      return { admin: false, owner: false };
     }
   }, []);
 
-  useEffect(() => {
-    const syncSession = () => {
-      const sessionId = localStorage.getItem("sessionId");
-      const loggedIn = Boolean(sessionId);
-      setIsLoggedIn(loggedIn);
-      if (loggedIn) {
-        fetchAdminStatus(sessionId);
-      } else {
-        setIsAdmin(false);
-      }
-    };
-    window.addEventListener("storage", syncSession);
-    window.addEventListener("giftiz-session-change", syncSession);
-    syncSession();
-    return () => {
-      window.removeEventListener("storage", syncSession);
-      window.removeEventListener("giftiz-session-change", syncSession);
-    };
-  }, [fetchAdminStatus]);
+  const syncSessionState = useCallback(async () => {
+    if (typeof window === "undefined") {
+      setIsLoggedIn(false);
+      setIsAdmin(false);
+      setIsOwner(false);
+      setSessionReady(true);
+      return;
+    }
 
-  useEffect(() => {
     const sessionId = localStorage.getItem("sessionId");
-    setIsLoggedIn(Boolean(sessionId));
-    if (sessionId) {
-      fetchAdminStatus(sessionId);
+    const loggedIn = Boolean(sessionId);
+    setIsLoggedIn(loggedIn);
+
+    if (loggedIn) {
+      await loadSessionRoles(sessionId);
     } else {
       setIsAdmin(false);
+      setIsOwner(false);
     }
-  }, [location.key, fetchAdminStatus]);
+
+    setSessionReady(true);
+  }, [loadSessionRoles]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const handleSessionChange = () => {
+      syncSessionState();
+    };
+
+    window.addEventListener("storage", handleSessionChange);
+    window.addEventListener("giftiz-session-change", handleSessionChange);
+    syncSessionState();
+
+    return () => {
+      window.removeEventListener("storage", handleSessionChange);
+      window.removeEventListener("giftiz-session-change", handleSessionChange);
+    };
+  }, [syncSessionState]);
 
   const handleLogout = useCallback(async () => {
     const sessionId = localStorage.getItem("sessionId");
@@ -90,9 +111,26 @@ function App() {
     localStorage.removeItem("sessionId");
     setIsLoggedIn(false);
     setIsAdmin(false);
+    setIsOwner(false);
     window.dispatchEvent(new Event("giftiz-session-change"));
     navigate("/");
   }, [navigate]);
+
+  const RouteGuard = ({ children, allow, redirectTo = "/login" }) => {
+    if (!sessionReady) {
+      return (
+        <div className="route-guard surface" aria-live="polite">
+          טוען הרשאות משתמש...
+        </div>
+      );
+    }
+
+    if (!allow) {
+      return <Navigate to={redirectTo} replace />;
+    }
+
+    return children;
+  };
 
   return (
     <div className="app-shell">
@@ -138,10 +176,38 @@ function App() {
           <Route path="/SearchEngineBar" element={<SearchEngineBar/>} />
           <Route path="/cart" element={<Cart/>} />
           <Route path="/thank-you" element={<ThankYou />} />
-          <Route path="/admin" element={<Admin />} />
-          <Route path="/admin/inventory" element={<InventoryAdmin />} />
-          <Route path="/owner" element={<Owner />} />
-          <Route path="/owner/security" element={<OwnerSecurity />} />
+          <Route
+            path="/admin"
+            element={(
+              <RouteGuard allow={isLoggedIn && isAdmin}>
+                <Admin />
+              </RouteGuard>
+            )}
+          />
+          <Route
+            path="/admin/inventory"
+            element={(
+              <RouteGuard allow={isLoggedIn && isAdmin}>
+                <InventoryAdmin />
+              </RouteGuard>
+            )}
+          />
+          <Route
+            path="/owner"
+            element={(
+              <RouteGuard allow={isLoggedIn && isOwner} redirectTo="/">
+                <Owner />
+              </RouteGuard>
+            )}
+          />
+          <Route
+            path="/owner/security"
+            element={(
+              <RouteGuard allow={isLoggedIn && isOwner} redirectTo="/">
+                <OwnerSecurity />
+              </RouteGuard>
+            )}
+          />
         </Routes>
       </div>
 
