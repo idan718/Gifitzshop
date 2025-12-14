@@ -1,0 +1,6 @@
+# Ignore dependencies and build artifacts generated under server
+node_modules/
+dist/
+logs/
+*.log
+.env
