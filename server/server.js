@@ -27,7 +27,27 @@ const MAX_SESSIONS_PER_USER = Number(process.env.MAX_SESSIONS_PER_USER || 1);
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || 'sk_test_51RMLa82flqUWGmzSnvstRo7chn6psJfPMd45jLTQxpMuz52oMsA3x5ih9AdSWMtK2rYwW1AXUgjNtZOoApabg4X100UUTJa55A';
 const STRIPE_PUBLISHABLE_KEY = process.env.STRIPE_PUBLISHABLE_KEY || 'pk_test_51RMLa82flqUWGmzS8X8Q118uzFbXmbsOPVpg9JygBIDMvloAoXpj2oCrs24sVWiVi4JaWidGLU9pNG3SoxRKuVnO00ex2sdStm';
 const stripe = new Stripe(STRIPE_SECRET_KEY);
-const SCRIPT_GUARD_PATTERN = /<\s*script|javascript:/i;
+const SCRIPT_GUARD_PATTERN = /<\s*\/\?\s*script\b|<\s*iframe|javascript\s*:|vbscript\s*:|data\s*:[^,]*,|on\w+\s*=|srcdoc\s*=|eval\s*\(|Function\s*\(|setTimeout\s*\(|setInterval\s*\(/i;
+const SAFE_URL_PROTOCOLS = ['http:', 'https:'];
+const RELATIVE_URL_PATTERN = /^\/[A-Za-z0-9._/-]*$/;
+const RELATIVE_FILE_SEGMENT_PATTERN = /^[A-Za-z0-9._/-]+$/;
+const RELATIVE_PARENT_SEGMENT_PATTERN = /(?:^|\/)\.\.(?:\/|$)/;
+const DATA_URI_IMAGE_PATTERN = /^data:image\/[a-z0-9.+-]+;base64,[a-zA-Z0-9+/=\s]+$/i;
+const PRIVATE_HOSTNAME_PATTERNS = [
+  /^localhost$/i,
+  /^127(?:\.\d{1,3}){3}$/i,
+  /^0\.0\.0\.0$/i,
+  /^10(?:\.\d{1,3}){3}$/i,
+  /^192\.168(?:\.\d{1,3}){2}$/i,
+  /^172\.(1[6-9]|2[0-9]|3[0-1])(?:\.\d{1,3}){2}$/i,
+  /^169\.254(?:\.\d{1,3}){2}$/i,
+  /^::1$/i,
+  /^fe80:/i,
+  /^fc00:/i,
+  /^fd00:/i
+];
+const MAX_ALLOWED_URL_LENGTH = Number(process.env.MAX_ALLOWED_URL_LENGTH || 2048);
+const MAX_DATA_URI_LENGTH = Number(process.env.MAX_DATA_URI_LENGTH || 5_000_000);
 const EMAIL_PATTERN = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
 const MAX_CART_ITEM_QUANTITY = 20;
 const MAX_ITEM_IMAGES = Number(process.env.MAX_ITEM_IMAGES || 8);
@@ -58,6 +78,7 @@ const authLimiter = rateLimit({
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+app.use(blockJavascriptPayload);
 app.use(globalLimiter);
 
 function ensureFile(filePath, defaultValue) {
@@ -125,7 +146,142 @@ function sanitizeText(value) {
   if (value === null || value === undefined) {
     return '';
   }
-  return String(value).replace(/[<>]/g, '').trim();
+  return String(value).replace(/[<>`]/g, '').trim();
+}
+
+function isPrivateHostname(hostname) {
+  if (!hostname) {
+    return true;
+  }
+  const normalized = hostname.toLowerCase();
+  if (PRIVATE_HOSTNAME_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return true;
+  }
+  return normalized.endsWith('.local');
+}
+
+function sanitizeUrl(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const cleaned = sanitizeText(value);
+  if (!cleaned) {
+    return null;
+  }
+  const trimmed = cleaned.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const lowerTrimmed = trimmed.toLowerCase();
+  if (lowerTrimmed.startsWith('data:')) {
+    if (trimmed.length > MAX_DATA_URI_LENGTH) {
+      return null;
+    }
+    return DATA_URI_IMAGE_PATTERN.test(trimmed) ? trimmed : null;
+  }
+
+  if (trimmed.length > MAX_ALLOWED_URL_LENGTH) {
+    return null;
+  }
+
+  if (!trimmed.includes('://')) {
+    if (trimmed.includes('//')) {
+      return null;
+    }
+    if (RELATIVE_PARENT_SEGMENT_PATTERN.test(trimmed)) {
+      return null;
+    }
+    if (RELATIVE_URL_PATTERN.test(trimmed) || RELATIVE_FILE_SEGMENT_PATTERN.test(trimmed)) {
+      return trimmed;
+    }
+    return null;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    const protocol = parsed.protocol.toLowerCase();
+    if (!SAFE_URL_PROTOCOLS.includes(protocol)) {
+      return null;
+    }
+    if (isPrivateHostname(parsed.hostname)) {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function collectSafeImageValues(input) {
+  if (input === null || input === undefined) {
+    return { normalized: [], rejected: 0 };
+  }
+  const rawList = Array.isArray(input) ? input : [input];
+  const normalized = [];
+  let rejected = 0;
+  for (const entry of rawList) {
+    if (normalized.length >= MAX_ITEM_IMAGES) {
+      break;
+    }
+    const safeValue = sanitizeUrl(entry);
+    if (safeValue) {
+      normalized.push(safeValue);
+    } else {
+      rejected += 1;
+    }
+  }
+  return { normalized, rejected };
+}
+
+function isClearingImageValue(value) {
+  if (value === null) {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.length === 0;
+  }
+  if (typeof value === 'string') {
+    return !sanitizeText(value);
+  }
+  return false;
+}
+
+function isSafeDataUri(value) {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  if (value.length > MAX_DATA_URI_LENGTH) {
+    return false;
+  }
+  return DATA_URI_IMAGE_PATTERN.test(value.trim());
+}
+
+function containsJavascriptPayload(value) {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value === 'string') {
+    if (isSafeDataUri(value)) {
+      return false;
+    }
+    return SCRIPT_GUARD_PATTERN.test(value);
+  }
+  if (Array.isArray(value)) {
+    return value.some(containsJavascriptPayload);
+  }
+  if (typeof value === 'object') {
+    return Object.values(value).some(containsJavascriptPayload);
+  }
+  return false;
+}
+
+function blockJavascriptPayload(req, res, next) {
+  const includesJavascript = containsJavascriptPayload(req?.body) || containsJavascriptPayload(req?.query) || containsJavascriptPayload(req?.params);
+  if (includesJavascript) {
+    return res.status(400).json({ message: 'קלט לא יכול להכיל קוד JavaScript. הסירו את הקוד ונסו שוב.' });
+  }
+  return next();
 }
 
 function isEmptyOrScripted(value, { allowSpecial = false } = {}) {
@@ -145,21 +301,11 @@ function getSafeText(value) {
 }
 
 function normalizeImageList(input) {
-  if (!input) {
+  if (input === null || input === undefined) {
     return [];
   }
-  const rawList = Array.isArray(input) ? input : [input];
-  const sanitized = [];
-  for (const entry of rawList) {
-    if (sanitized.length >= MAX_ITEM_IMAGES) {
-      break;
-    }
-    const safeValue = getSafeText(entry);
-    if (safeValue) {
-      sanitized.push(safeValue);
-    }
-  }
-  return sanitized;
+  const { normalized } = collectSafeImageValues(input);
+  return normalized;
 }
 
 function attachImageMetadata(item) {
@@ -1109,6 +1255,16 @@ app.post('/admin/inventory', (req, res) => {
     return res.status(400).json({ message: 'Item price must be a non-negative number.' });
   }
 
+  const rawImages = itemImages !== undefined ? itemImages : itemImage;
+  const imagesProvided = rawImages !== undefined;
+  let safeImagesResult = { normalized: [], rejected: 0 };
+  if (imagesProvided) {
+    safeImagesResult = collectSafeImageValues(rawImages);
+    if (!safeImagesResult.normalized.length && safeImagesResult.rejected > 0 && !isClearingImageValue(rawImages)) {
+      return res.status(400).json({ message: 'כל קישורי התמונות שסיפקתם נדחו. השתמשו בכתובות http/https תקפות שאינן מפנות לשרתים פנימיים.' });
+    }
+  }
+
   const inventory = loadInventory();
   const nextId = inventory.length ? Math.max(...inventory.map((item) => Number(item.id) || 0)) + 1 : 1;
   const newItem = {
@@ -1117,7 +1273,7 @@ app.post('/admin/inventory', (req, res) => {
     itemQuantity: quantity,
     itemPriceILS: price
   };
-  applyImageUpdate(newItem, itemImages !== undefined ? itemImages : itemImage);
+  applyImageUpdate(newItem, imagesProvided ? safeImagesResult.normalized : rawImages);
   inventory.push(newItem);
   saveInventory(inventory);
   touchSession(wrapper);
@@ -1165,8 +1321,16 @@ app.patch('/admin/inventory/:itemId', (req, res) => {
   if (hasPrice) {
     item.itemPriceILS = normalizedPrice;
   }
+  let safeImagesResult = { normalized: [], rejected: 0 };
   if (hasImages) {
-    applyImageUpdate(item, rawImages);
+    safeImagesResult = collectSafeImageValues(rawImages);
+    if (!safeImagesResult.normalized.length && safeImagesResult.rejected > 0 && !isClearingImageValue(rawImages)) {
+      return res.status(400).json({ message: 'כל קישורי התמונות שסופקו נדחו. השתמשו בכתובות http/https תקינות שאינן מפנות לכתובות פנימיות.' });
+    }
+  }
+
+  if (hasImages) {
+    applyImageUpdate(item, safeImagesResult.normalized);
   }
 
   saveInventory(inventory);
@@ -1330,7 +1494,7 @@ app.post('/cart/:sessionId/items', (req, res) => {
   const price = Number(priceILS) || 0;
   const inventory = loadInventory();
   const inventoryItem = inventory.find((item) => String(item.id) === String(safeItemId));
-  const safeImage = getSafeText(imageUrl);
+  const safeImage = sanitizeUrl(imageUrl);
   const normalizedImage = safeImage || inventoryItem?.itemImages?.[0] || inventoryItem?.itemImage || '';
   const normalizedName = sanitizeText(name) || inventoryItem?.itemName || 'Item';
   const { session } = wrapper;
