@@ -7,17 +7,15 @@ const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const nodemailer = require('nodemailer');
 const Stripe = require('stripe');
+const rateLimit = require('express-rate-limit');
 
 // Initialize Express app
 const port = 3001;
 const app = express();
-
-// Middleware
-app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+app.set('trust proxy', 1);
 
 // Database file path
-const DB_PATH = './DB.json';
+const DB_PATH = path.join(__dirname, 'DB.json');
 const SESSIONS_PATH = path.join(__dirname, 'sessions.json');
 const INVENTORY_PATH = path.join(__dirname, 'inventory.json');
 const PURCHASES_PATH = path.join(__dirname, 'purchases.json');
@@ -33,6 +31,34 @@ const SCRIPT_GUARD_PATTERN = /<\s*script|javascript:/i;
 const EMAIL_PATTERN = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
 const MAX_CART_ITEM_QUANTITY = 20;
 const MAX_ITEM_IMAGES = Number(process.env.MAX_ITEM_IMAGES || 8);
+const VERIFICATION_CODE_TTL_MS = Number(process.env.VERIFICATION_CODE_TTL_MS || 5 * 60 * 1000);
+const HUMAN_TIME_LOCALE = process.env.HUMAN_TIME_LOCALE || 'he-IL';
+const HUMAN_TIME_TIMEZONE = process.env.HUMAN_TIME_TIMEZONE || 'Asia/Jerusalem';
+const GLOBAL_RATE_LIMIT_WINDOW_MS = Number(process.env.GLOBAL_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
+const GLOBAL_RATE_LIMIT = Number(process.env.GLOBAL_RATE_LIMIT || 1000);
+const AUTH_RATE_LIMIT_WINDOW_MS = Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS || 5 * 60 * 1000);
+const AUTH_RATE_LIMIT = Number(process.env.AUTH_RATE_LIMIT || 10);
+
+const globalLimiter = rateLimit({
+  windowMs: GLOBAL_RATE_LIMIT_WINDOW_MS,
+  limit: GLOBAL_RATE_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  handler: (req, res) => res.status(429).json({ message: 'תדירות הבקשות חורגת מהמותר. נסו שוב בעוד מספר דקות.' })
+});
+
+const authLimiter = rateLimit({
+  windowMs: AUTH_RATE_LIMIT_WINDOW_MS,
+  limit: AUTH_RATE_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  handler: (req, res) => res.status(429).json({ message: 'בוצעו יותר מדי ניסיונות אימות. המתינו מעט ונסו שוב.' })
+});
+
+// Middleware
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+app.use(globalLimiter);
 
 function ensureFile(filePath, defaultValue) {
   if (!fs.existsSync(filePath)) {
@@ -40,6 +66,8 @@ function ensureFile(filePath, defaultValue) {
   }
 }
 
+ensureFile(DB_PATH, []);
+ensureFile(INVENTORY_PATH, []);
 ensureFile(SESSIONS_PATH, []);
 ensureFile(PURCHASES_PATH, []);
 ensureFile(LOGIN_TICKETS_PATH, []);
@@ -152,6 +180,23 @@ function applyImageUpdate(target, images) {
   const normalized = normalizeImageList(images);
   target.itemImages = normalized;
   target.itemImage = normalized.length ? normalized[0] : null;
+}
+
+function formatHumanTimestamp(input) {
+  const date = typeof input === 'number' ? new Date(input) : new Date(String(input));
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  try {
+    return new Intl.DateTimeFormat(HUMAN_TIME_LOCALE, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      hour12: false,
+      timeZone: HUMAN_TIME_TIMEZONE
+    }).format(date);
+  } catch {
+    return date.toISOString();
+  }
 }
 
 function validateRequiredFields(fields, res) {
@@ -289,6 +334,8 @@ function createLoginTicket({ userId, code, admin, owner, method }) {
   const tickets = loadLoginTickets().filter(
     (ticket) => !(String(ticket.userId) === String(userId) && ticket.method === method)
   );
+  const createdAt = Date.now();
+  const expiresAt = createdAt + LOGIN_CODE_TTL_MS;
   const ticket = {
     id: generateSessionId(),
     userId,
@@ -296,8 +343,10 @@ function createLoginTicket({ userId, code, admin, owner, method }) {
     admin: Boolean(admin),
     owner: Boolean(owner),
     method: method || 'password',
-    createdAt: Date.now(),
-    expiresAt: Date.now() + LOGIN_CODE_TTL_MS
+    createdAt,
+    createdAtHuman: formatHumanTimestamp(createdAt),
+    expiresAt,
+    expiresAtHuman: formatHumanTimestamp(expiresAt)
   };
   tickets.push(ticket);
   saveLoginTickets(tickets);
@@ -490,7 +539,7 @@ app.get('/search', (req, res) => {
   return res.status(200).json(matches);
 });
 // signup endpoint (only save after email verification)
-app.post('/signup', async (req, res) => {
+app.post('/signup', authLimiter, async (req, res) => {
   const { name, pwd, userEmail } = req.body;
 
   if (!validateRequiredFields([
@@ -547,7 +596,8 @@ app.post('/signup', async (req, res) => {
         userEmail: safeEmail,
         admin: false,
         verified: false,
-        verificationCode
+        verificationCode,
+        verificationCodeExpiresAt: Date.now() + VERIFICATION_CODE_TTL_MS
       };
 
       db.push(targetUser);
@@ -573,7 +623,7 @@ app.post('/signup', async (req, res) => {
 
 // verify endpoint
 // verify endpoint (delete user if wrong code)
-app.post('/verify', (req, res) => {
+app.post('/verify', authLimiter, (req, res) => {
   const { userId, code } = req.body;
 
   if (!validateRequiredFields([
@@ -601,14 +651,29 @@ app.post('/verify', (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Wrong code → keep user but deny verification
-    if (user.verificationCode != normalizedCode) {
+    const now = Date.now();
+    const storedCode = sanitizeText(String(user.verificationCode ?? ''));
+    const isExpired = Boolean(user.verificationCodeExpiresAt) && now > Number(user.verificationCodeExpiresAt);
+
+    if (isExpired) {
+      delete user.verificationCode;
+      delete user.verificationCodeExpiresAt;
+      return fs.writeFile(DB_PATH, JSON.stringify(db, null, 2), (writeErr) => {
+        if (writeErr) {
+          return res.status(500).json({ message: 'Failed to update verification status.' });
+        }
+        return res.status(410).json({ message: 'Verification code expired. Please request a new one.' });
+      });
+    }
+
+    if (!storedCode || storedCode !== normalizedCode) {
       return res.status(400).json({ message: 'Invalid verification code. Please try again.' });
     }
 
     // Correct code → mark verified
     user.verified = true;
     delete user.verificationCode;
+    delete user.verificationCodeExpiresAt;
 
     fs.writeFile(DB_PATH, JSON.stringify(db, null, 2), (writeErr) => {
       if (writeErr) {
@@ -628,7 +693,7 @@ app.post('/verify', (req, res) => {
 
 
 // login endpoint
-app.post('/login', async (req, res) => {
+app.post('/login', authLimiter, async (req, res) => {
   const { name, pwd } = req.body;
 
   if (!validateRequiredFields([
@@ -697,7 +762,7 @@ app.post('/login', async (req, res) => {
   });
 });
 
-app.post('/login/verify-code', (req, res) => {
+app.post('/login/verify-code', authLimiter, (req, res) => {
   const { ticketId, code } = req.body || {};
   if (!ticketId || !code) {
     return res.status(400).json({ message: 'נדרש מזהה אסימון וקוד אימות.' });
@@ -741,7 +806,7 @@ app.post('/login/verify-code', (req, res) => {
   });
 });
 
-app.post('/login-email', async (req, res) => {
+app.post('/login-email', authLimiter, async (req, res) => {
   const { email } = req.body || {};
   if (!validateRequiredFields([
     { value: email, name: 'Email', type: 'email' }
@@ -787,7 +852,7 @@ app.post('/login-email', async (req, res) => {
   });
 });
 
-app.post('/login-email/verify-code', (req, res) => {
+app.post('/login-email/verify-code', authLimiter, (req, res) => {
   const { ticketId, code } = req.body || {};
   if (!ticketId || !code) {
     return res.status(400).json({ message: 'נדרש מזהה אסימון וקוד אימות.' });
@@ -832,7 +897,7 @@ app.post('/login-email/verify-code', (req, res) => {
 });
 
 // forgot-password endpoint
-app.post('/forgot-password', async (req, res) => {
+app.post('/forgot-password', authLimiter, async (req, res) => {
   const { email } = req.body;
 
   if (!validateRequiredFields([
@@ -870,7 +935,7 @@ app.post('/forgot-password', async (req, res) => {
   });
 });
 
-app.post('/forgot-password/verify-code', (req, res) => {
+app.post('/forgot-password/verify-code', authLimiter, (req, res) => {
   const { email, code } = req.body || {};
   if (!validateRequiredFields([
     { value: email, name: 'Email', type: 'email' },
@@ -902,7 +967,7 @@ app.post('/forgot-password/verify-code', (req, res) => {
   return res.status(200).json({ message: 'Verification successful. המשיכו להגדרת סיסמה חדשה.', resetToken });
 });
 
-app.post('/forgot-password/reset', async (req, res) => {
+app.post('/forgot-password/reset', authLimiter, async (req, res) => {
   const { email, resetToken, newPassword } = req.body || {};
   if (!validateRequiredFields([
     { value: email, name: 'Email', type: 'email' },
@@ -1408,6 +1473,7 @@ app.post('/checkout/complete', async (req, res) => {
     const users = readJSON(DB_PATH, []);
     const user = users.find((u) => u.id === session.userId);
 
+    const purchaseCreatedAt = Date.now();
     const newPurchase = {
       id: purchaseId,
       userId: session.userId,
@@ -1415,7 +1481,8 @@ app.post('/checkout/complete', async (req, res) => {
       paymentIntentId: safePaymentIntentId,
       items,
       totalILS: total,
-      createdAt: new Date().toISOString()
+      createdAt: new Date(purchaseCreatedAt).toISOString(),
+      createdAtHuman: formatHumanTimestamp(purchaseCreatedAt)
     };
 
     purchases.push(newPurchase);
@@ -1425,7 +1492,7 @@ app.post('/checkout/complete', async (req, res) => {
       .map((entry) => `${entry.quantity || 0}× ${entry.name || 'פריט'} – ₪${Number(entry.priceILS || 0).toFixed(2)}`)
       .join('\n');
     const purchaserEmail = user?.userEmail || 'משתמש לא ידוע';
-    const purchaseSummary = `מספר הזמנה: ${purchaseId}\nמשתמש: ${purchaserEmail}\nסכום כולל: ₪${total.toFixed(2)}\n\nפריטים:\n${itemLines}`;
+    const purchaseSummary = `מספר הזמנה: ${purchaseId}\nמשתמש: ${purchaserEmail}\nנרשם בתאריך: ${newPurchase.createdAtHuman || newPurchase.createdAt}\nסכום כולל: ₪${total.toFixed(2)}\n\nפריטים:\n${itemLines}`;
 
     try {
       await transporter.sendMail({
