@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
 
-function SearchBar({ items, setFilteredItems }) {
+function SearchBar({ activeCategoryId, onResults, onReset }) {
   const [query, setQuery] = useState("");
 
   useEffect(() => {
     const trimmedQuery = query.trim();
     if (!trimmedQuery) {
-      setFilteredItems(items);
+      onReset();
       return undefined;
     }
 
@@ -15,21 +15,28 @@ function SearchBar({ items, setFilteredItems }) {
 
     const runSearch = async () => {
       try {
-        const res = await fetch(`http://localhost:3001/search?q=${encodeURIComponent(trimmedQuery)}`, {
-          signal: controller.signal
-        });
+        const url = new URL("http://localhost:3001/search");
+        url.searchParams.set("q", trimmedQuery);
+        if (activeCategoryId !== null && activeCategoryId !== undefined) {
+          url.searchParams.set("categoryId", activeCategoryId);
+        }
+        const res = await fetch(url.toString(), { signal: controller.signal });
         if (!res.ok) {
-          throw new Error('Search request failed');
+          throw new Error("Search request failed");
         }
         const data = await res.json();
         if (!cancelled) {
-          setFilteredItems(Array.isArray(data) ? data : []);
+          onResults({
+            items: Array.isArray(data?.items) ? data.items : [],
+            categories: Array.isArray(data?.categories) ? data.categories : []
+          });
         }
       } catch (error) {
         if (error.name === "AbortError" || cancelled) {
           return;
         }
-        setFilteredItems([]);
+        console.error("Search failed", error);
+        onResults({ items: [], categories: [] });
       }
     };
 
@@ -39,13 +46,15 @@ function SearchBar({ items, setFilteredItems }) {
       cancelled = true;
       controller.abort();
     };
-  }, [query, items, setFilteredItems]);
+  }, [query, activeCategoryId, onResults, onReset]);
+
+  const placeholder = activeCategoryId ? "חיפוש בתוך קטגוריה זו..." : "חיפוש מוצרים או קטגוריות...";
 
   return (
     <div className="search-bar">
       <input
         type="text"
-        placeholder="חיפוש מוצרים..."
+        placeholder={placeholder}
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />

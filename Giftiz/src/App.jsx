@@ -17,6 +17,7 @@ import ThankYou from "./ThankYou.jsx";
 import Admin from "./Admin.jsx";
 import Owner from "./Owner.jsx";
 import InventoryAdmin from "./InventoryAdmin.jsx";
+import InventoryNewItem from "./InventoryNewItem.jsx";
 import OwnerSecurity from "./OwnerSecurity.jsx";
 import PasswordRecovery from "./PasswordRecovery.jsx";
 import PasswordReset from "./PasswordReset.jsx";
@@ -189,6 +190,14 @@ function App() {
             element={(
               <RouteGuard allow={isLoggedIn && isAdmin}>
                 <InventoryAdmin />
+              </RouteGuard>
+            )}
+          />
+          <Route
+            path="/admin/inventory/new"
+            element={(
+              <RouteGuard allow={isLoggedIn && isAdmin}>
+                <InventoryNewItem />
               </RouteGuard>
             )}
           />

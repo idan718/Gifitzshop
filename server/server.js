@@ -1,4 +1,5 @@
 // importing required modules
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
@@ -20,6 +21,7 @@ const SESSIONS_PATH = path.join(__dirname, 'sessions.json');
 const INVENTORY_PATH = path.join(__dirname, 'inventory.json');
 const PURCHASES_PATH = path.join(__dirname, 'purchases.json');
 const LOGIN_TICKETS_PATH = path.join(__dirname, 'loginTickets.json');
+const CATEGORIES_PATH = path.join(__dirname, 'categories.json');
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours of inactivity invalidates a session
 const SESSION_CLOSE_GRACE_MS = Number(process.env.SESSION_CLOSE_GRACE_MS || 15_000);
 const LOGIN_CODE_TTL_MS = Number(process.env.LOGIN_CODE_TTL_MS || 10 * 60 * 1000);
@@ -58,6 +60,12 @@ const GLOBAL_RATE_LIMIT_WINDOW_MS = Number(process.env.GLOBAL_RATE_LIMIT_WINDOW_
 const GLOBAL_RATE_LIMIT = Number(process.env.GLOBAL_RATE_LIMIT || 1000);
 const AUTH_RATE_LIMIT_WINDOW_MS = Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS || 5 * 60 * 1000);
 const AUTH_RATE_LIMIT = Number(process.env.AUTH_RATE_LIMIT || 10);
+const SMTP_HOST = process.env.SMTP_HOST || 'sandbox.smtp.mailtrap.io';
+const SMTP_PORT = Number(process.env.SMTP_PORT || 2525);
+const SMTP_SECURE = process.env.SMTP_SECURE === 'true';
+const SMTP_USER = process.env.SMTP_USER || '';
+const SMTP_PASS = process.env.SMTP_PASS || '';
+const SMTP_REQUIRE_TLS = process.env.SMTP_REQUIRE_TLS === 'true';
 
 const globalLimiter = rateLimit({
   windowMs: GLOBAL_RATE_LIMIT_WINDOW_MS,
@@ -92,6 +100,7 @@ ensureFile(INVENTORY_PATH, []);
 ensureFile(SESSIONS_PATH, []);
 ensureFile(PURCHASES_PATH, []);
 ensureFile(LOGIN_TICKETS_PATH, []);
+ensureFile(CATEGORIES_PATH, []);
 
 function readJSON(filePath, fallback = []) {
   try {
@@ -132,6 +141,14 @@ function saveUsers(users) {
 
 function loadPurchases() {
   return readJSON(PURCHASES_PATH, []);
+}
+
+function loadCategories() {
+  return readJSON(CATEGORIES_PATH, []);
+}
+
+function saveCategories(categories) {
+  writeJSON(CATEGORIES_PATH, categories);
 }
 
 function loadLoginTickets() {
@@ -626,13 +643,11 @@ function normalizeCartItems(cart) {
 
 // Nodemailer email sender
 const transporter = nodemailer.createTransport({
-  host: "sandbox.smtp.mailtrap.io",
-
-  port: 2525,
-  auth: {
-    user: 'adef7afe51befe',
-    pass: 'b4b70ef61887e1'
-  }
+  host: SMTP_HOST,
+  port: SMTP_PORT,
+  secure: SMTP_SECURE,
+  requireTLS: SMTP_REQUIRE_TLS,
+  auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined
 });
 
 app.post('/contact-message', async (req, res) => {
@@ -666,23 +681,61 @@ ${safeMessage}`
 });
 
 app.get('/items', (req, res) => {
-  return res.status(200).json(loadInventory());
+  const inventory = loadInventory();
+  const rawCategory = req.query.categoryId;
+  if (rawCategory === undefined) {
+    return res.status(200).json(inventory);
+  }
+
+  const normalizedCategoryId = Number(rawCategory);
+  if (!Number.isInteger(normalizedCategoryId)) {
+    return res.status(400).json({ message: 'Invalid category filter.' });
+  }
+
+  const filtered = inventory.filter((item) => Number(item.categoryId) === normalizedCategoryId);
+  return res.status(200).json(filtered);
+});
+
+app.get('/categories', (req, res) => {
+  return res.status(200).json(loadCategories());
 });
 
 app.get('/search', (req, res) => {
   const rawQuery = typeof req.query.q === 'string' ? req.query.q : '';
   const normalizedQuery = sanitizeText(rawQuery).toLowerCase();
-  if (!normalizedQuery) {
-    return res.status(200).json([]);
+  const rawCategoryId = req.query.categoryId;
+  const hasCategoryFilter = rawCategoryId !== undefined;
+
+  let normalizedCategoryId = null;
+  if (hasCategoryFilter) {
+    normalizedCategoryId = Number(rawCategoryId);
+    if (!Number.isInteger(normalizedCategoryId)) {
+      return res.status(400).json({ message: 'Invalid category filter.' });
+    }
   }
 
+  const categories = loadCategories();
   const items = loadInventory();
-  const matches = items.filter((item) => {
-    const name = typeof item.itemName === 'string' ? item.itemName : '';
-    return name.toLowerCase().includes(normalizedQuery);
-  });
+  const scopedItems = hasCategoryFilter
+    ? items.filter((item) => Number(item.categoryId) === normalizedCategoryId)
+    : items;
 
-  return res.status(200).json(matches);
+  const matchingItems = normalizedQuery
+    ? scopedItems.filter((item) => {
+        const name = typeof item.itemName === 'string' ? item.itemName : '';
+        return name.toLowerCase().includes(normalizedQuery);
+      })
+    : hasCategoryFilter
+      ? scopedItems
+      : [];
+
+  const matchingCategories = hasCategoryFilter
+    ? []
+    : normalizedQuery
+      ? categories.filter((category) => (category?.name || '').toLowerCase().includes(normalizedQuery))
+      : categories;
+
+  return res.status(200).json({ items: matchingItems, categories: matchingCategories });
 });
 // signup endpoint (only save after email verification)
 app.post('/signup', authLimiter, async (req, res) => {
@@ -1239,7 +1292,7 @@ app.post('/admin/inventory', (req, res) => {
     return;
   }
 
-  const { itemName, itemQuantity, itemPriceILS, itemImages, itemImage } = req.body;
+  const { itemName, itemQuantity, itemPriceILS, itemImages, itemImage, itemCategoryId } = req.body;
   if (!validateRequiredFields([
     { value: itemName, name: 'Item name' }
   ], res)) {
@@ -1253,6 +1306,15 @@ app.post('/admin/inventory', (req, res) => {
   }
   if (!Number.isFinite(price) || price < 0) {
     return res.status(400).json({ message: 'Item price must be a non-negative number.' });
+  }
+
+  const normalizedCategoryId = Number(itemCategoryId);
+  if (!Number.isInteger(normalizedCategoryId)) {
+    return res.status(400).json({ message: 'Category is required.' });
+  }
+  const categories = loadCategories();
+  if (!categories.some((category) => Number(category.id) === normalizedCategoryId)) {
+    return res.status(400).json({ message: 'Category does not exist.' });
   }
 
   const rawImages = itemImages !== undefined ? itemImages : itemImage;
@@ -1271,7 +1333,8 @@ app.post('/admin/inventory', (req, res) => {
     id: nextId,
     itemName: sanitizeText(itemName),
     itemQuantity: quantity,
-    itemPriceILS: price
+    itemPriceILS: price,
+    categoryId: normalizedCategoryId
   };
   applyImageUpdate(newItem, imagesProvided ? safeImagesResult.normalized : rawImages);
   inventory.push(newItem);
@@ -1291,22 +1354,33 @@ app.patch('/admin/inventory/:itemId', (req, res) => {
     return res.status(400).json({ message: 'Item id is invalid.' });
   }
 
-  const { itemQuantity, itemPriceILS, itemImages, itemImage } = req.body || {};
+  const { itemQuantity, itemPriceILS, itemImages, itemImage, itemCategoryId } = req.body || {};
   const hasQuantity = itemQuantity !== undefined;
   const hasPrice = itemPriceILS !== undefined;
   const rawImages = itemImages !== undefined ? itemImages : itemImage;
   const hasImages = rawImages !== undefined;
-  if (!hasQuantity && !hasPrice && !hasImages) {
-    return res.status(400).json({ message: 'Provide quantity, price, or images to update.' });
+  const hasCategory = itemCategoryId !== undefined;
+  if (!hasQuantity && !hasPrice && !hasImages && !hasCategory) {
+    return res.status(400).json({ message: 'Provide quantity, price, images, or category to update.' });
   }
 
   const normalizedQuantity = hasQuantity ? Number(itemQuantity) : null;
   const normalizedPrice = hasPrice ? Number(itemPriceILS) : null;
+  const normalizedCategoryId = hasCategory ? Number(itemCategoryId) : null;
   if (hasQuantity && (!Number.isFinite(normalizedQuantity) || normalizedQuantity < 0)) {
     return res.status(400).json({ message: 'Item quantity must be a non-negative number.' });
   }
   if (hasPrice && (!Number.isFinite(normalizedPrice) || normalizedPrice < 0)) {
     return res.status(400).json({ message: 'Item price must be a non-negative number.' });
+  }
+  if (hasCategory) {
+    if (!Number.isInteger(normalizedCategoryId)) {
+      return res.status(400).json({ message: 'Category is invalid.' });
+    }
+    const categories = loadCategories();
+    if (!categories.some((category) => Number(category.id) === normalizedCategoryId)) {
+      return res.status(400).json({ message: 'Category does not exist.' });
+    }
   }
 
   const inventory = loadInventory();
@@ -1320,6 +1394,9 @@ app.patch('/admin/inventory/:itemId', (req, res) => {
   }
   if (hasPrice) {
     item.itemPriceILS = normalizedPrice;
+  }
+  if (hasCategory) {
+    item.categoryId = normalizedCategoryId;
   }
   let safeImagesResult = { normalized: [], rejected: 0 };
   if (hasImages) {
@@ -1448,6 +1525,59 @@ app.delete('/owner/users/:userId', (req, res) => {
   removeUserSessions(normalizedUserId);
   touchSession(wrapper);
   return res.status(200).json({ message: 'User deleted.', user: { id: removed.id, userEmail: removed.userEmail } });
+});
+
+app.post('/owner/categories', (req, res) => {
+  const wrapper = requireOwnerSession(req, res);
+  if (!wrapper) {
+    return;
+  }
+
+  const { name } = req.body || {};
+  const safeName = sanitizeText(name);
+  if (!safeName) {
+    return res.status(400).json({ message: 'Category name is required.' });
+  }
+
+  const categories = loadCategories();
+  if (categories.some((category) => category.name?.toLowerCase() === safeName.toLowerCase())) {
+    return res.status(400).json({ message: 'Category already exists.' });
+  }
+
+  const nextId = categories.length ? Math.max(...categories.map((entry) => Number(entry.id) || 0)) + 1 : 1;
+  const newCategory = { id: nextId, name: safeName };
+  categories.push(newCategory);
+  saveCategories(categories);
+  touchSession(wrapper);
+  return res.status(201).json({ message: 'Category created', category: newCategory });
+});
+
+app.delete('/owner/categories/:categoryId', (req, res) => {
+  const wrapper = requireOwnerSession(req, res);
+  if (!wrapper) {
+    return;
+  }
+
+  const normalizedCategoryId = Number(req.params.categoryId);
+  if (!Number.isInteger(normalizedCategoryId)) {
+    return res.status(400).json({ message: 'Category id is invalid.' });
+  }
+
+  const categories = loadCategories();
+  const index = categories.findIndex((category) => Number(category.id) === normalizedCategoryId);
+  if (index === -1) {
+    return res.status(404).json({ message: 'Category not found.' });
+  }
+
+  const inventory = loadInventory();
+  if (inventory.some((item) => Number(item.categoryId) === normalizedCategoryId)) {
+    return res.status(400).json({ message: 'Cannot delete category in use by an item.' });
+  }
+
+  const [removed] = categories.splice(index, 1);
+  saveCategories(categories);
+  touchSession(wrapper);
+  return res.status(200).json({ message: 'Category deleted', category: removed });
 });
 
 app.get('/cart/:sessionId', (req, res) => {

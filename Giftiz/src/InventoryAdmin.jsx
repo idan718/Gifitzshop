@@ -6,14 +6,13 @@ const MAX_IMAGES_PER_ITEM = 6;
 function InventoryAdmin() {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [editing, setEditing] = useState({});
   const [loading, setLoading] = useState(true);
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
   const [error, setError] = useState("");
-  const [form, setForm] = useState({ name: "", quantity: "", price: "", images: [] });
   const [submitting, setSubmitting] = useState(false);
   const [sessionId, setSessionId] = useState(() => (typeof window !== "undefined" ? localStorage.getItem("sessionId") : null));
-  const [dragActive, setDragActive] = useState(false);
-  const fileInputRef = useRef(null);
   const editingImageInputs = useRef({});
 
   useEffect(() => {
@@ -24,6 +23,23 @@ function InventoryAdmin() {
       window.removeEventListener("storage", syncSession);
       window.removeEventListener("giftiz-session-change", syncSession);
     };
+  }, []);
+
+  const fetchCategories = useCallback(async () => {
+    setCategoriesLoading(true);
+    try {
+      const res = await fetch("http://localhost:3001/categories");
+      if (!res.ok) {
+        throw new Error("לא ניתן לטעון קטגוריות זמינות");
+      }
+      const data = await res.json();
+      setCategories(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setError(err.message);
+      setCategories([]);
+    } finally {
+      setCategoriesLoading(false);
+    }
   }, []);
 
   const fetchInventory = useCallback(async () => {
@@ -51,7 +67,8 @@ function InventoryAdmin() {
         structured[item.id] = {
           quantity: item.itemQuantity,
           price: Number(item.itemPriceILS).toFixed(2),
-          images: Array.isArray(item.itemImages) ? item.itemImages : item.itemImage ? [item.itemImage] : []
+          images: Array.isArray(item.itemImages) ? item.itemImages : item.itemImage ? [item.itemImage] : [],
+          categoryId: item.categoryId ? String(item.categoryId) : ""
         };
       });
       setEditing(structured);
@@ -67,9 +84,9 @@ function InventoryAdmin() {
     fetchInventory();
   }, [fetchInventory]);
 
-  const handleInput = (field, value) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
-  };
+  useEffect(() => {
+    fetchCategories();
+  }, [fetchCategories]);
 
   const ingestFiles = (files, onLoad) => {
     const list = Array.from(files || []);
@@ -87,72 +104,6 @@ function InventoryAdmin() {
       };
       reader.readAsDataURL(file);
     });
-  };
-
-  const appendFormImage = (dataUrl) => {
-    let accepted = false;
-    setForm((prev) => {
-      const nextImages = prev.images || [];
-      if (nextImages.length >= MAX_IMAGES_PER_ITEM) {
-        return prev;
-      }
-      accepted = true;
-      return { ...prev, images: [...nextImages, dataUrl] };
-    });
-    if (!accepted) {
-      setError(`ניתן להעלות עד ${MAX_IMAGES_PER_ITEM} תמונות לפריט.`);
-    }
-  };
-
-  const addImagesToForm = (fileList) => {
-    if (!fileList || fileList.length === 0) {
-      return;
-    }
-    ingestFiles(fileList, appendFormImage);
-  };
-
-  const handleImageInput = (event) => {
-    addImagesToForm(event.target.files);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
-
-  const handleDrop = (event) => {
-    event.preventDefault();
-    setDragActive(false);
-    addImagesToForm(event.dataTransfer?.files);
-  };
-
-  const handleDragOver = (event) => {
-    event.preventDefault();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = "copy";
-    }
-    if (!dragActive) {
-      setDragActive(true);
-    }
-  };
-
-  const handleDragLeave = (event) => {
-    event.preventDefault();
-    if (dragActive && !event.currentTarget.contains(event.relatedTarget)) {
-      setDragActive(false);
-    }
-  };
-
-  const clearImage = () => {
-    setForm((prev) => ({ ...prev, images: [] }));
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
-
-  const removeFormImage = (index) => {
-    setForm((prev) => ({
-      ...prev,
-      images: prev.images.filter((_, idx) => idx !== index)
-    }));
   };
 
   const appendEditingImage = (id, dataUrl) => {
@@ -220,41 +171,6 @@ function InventoryAdmin() {
     }));
   };
 
-  const handleAdd = async (event) => {
-    event.preventDefault();
-    if (!sessionId) {
-      setError("נדרש להתחבר עם חשבון מנהל.");
-      return;
-    }
-    setSubmitting(true);
-    setError("");
-    try {
-      const res = await fetch("http://localhost:3001/admin/inventory", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-session-id": sessionId
-        },
-        body: JSON.stringify({
-          itemName: form.name,
-          itemQuantity: form.quantity,
-          itemPriceILS: form.price,
-          itemImages: form.images
-        })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || "לא ניתן להוסיף פריט");
-      }
-      setForm({ name: "", quantity: "", price: "", images: [] });
-      await fetchInventory();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   const handleDelete = async (id) => {
     if (!sessionId) {
       setError("נדרש להתחבר עם חשבון מנהל.");
@@ -300,17 +216,21 @@ function InventoryAdmin() {
     setSubmitting(true);
     setError("");
     try {
+      const payload = {
+        itemQuantity: pending.quantity,
+        itemPriceILS: pending.price,
+        itemImages: pending.images
+      };
+      if (pending.categoryId) {
+        payload.itemCategoryId = Number(pending.categoryId);
+      }
       const res = await fetch(`http://localhost:3001/admin/inventory/${id}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           "x-session-id": sessionId
         },
-        body: JSON.stringify({
-          itemQuantity: pending.quantity,
-          itemPriceILS: pending.price,
-          itemImages: pending.images
-        })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (!res.ok) {
@@ -322,7 +242,8 @@ function InventoryAdmin() {
         [id]: {
           quantity: data.item.itemQuantity,
           price: Number(data.item.itemPriceILS).toFixed(2),
-          images: Array.isArray(data.item.itemImages) ? data.item.itemImages : []
+          images: Array.isArray(data.item.itemImages) ? data.item.itemImages : [],
+          categoryId: data.item.categoryId ? String(data.item.categoryId) : ""
         }
       }));
     } catch (err) {
@@ -340,82 +261,26 @@ function InventoryAdmin() {
           <p className="form-helper">הוסיפו או הסירו מוצרים זמינים בחנות וצירפו גלריית תמונות עשירה לכל פריט.</p>
         </div>
 
-        <form className="inventory-form" onSubmit={handleAdd}>
-          <input
-            type="text"
-            placeholder="שם מוצר"
-            value={form.name}
-            onChange={(e) => handleInput("name", e.target.value)}
-            required
-          />
-          <input
-            type="number"
-            min="0"
-            placeholder="כמות"
-            value={form.quantity}
-            onChange={(e) => handleInput("quantity", e.target.value)}
-            required
-          />
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            placeholder="מחיר ב-₪"
-            value={form.price}
-            onChange={(e) => handleInput("price", e.target.value)}
-            required
-          />
-          <div className="image-upload-field">
-            <span className="form-helper">תמונות מוצר</span>
-            <button
-              type="button"
-              className={`image-drop ${dragActive ? "drag-active" : ""} ${form.images.length ? "has-image" : ""}`}
-              onClick={() => fileInputRef.current?.click()}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-            >
-              {form.images.length ? (
-                <div className="image-drop-preview">
-                  <img src={form.images[0]} alt="תצוגה מקדימה" />
-                  {form.images.length > 1 && (
-                    <span className="image-drop-count">+{form.images.length - 1}</span>
-                  )}
-                </div>
-              ) : (
-                <span>drop images here</span>
-              )}
+        <div className="stack">
+          <div className="nav-grid">
+            <button onClick={() => navigate("/admin/inventory/new")}>
+              הוספת פריט חדש
             </button>
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              ref={fileInputRef}
-              onChange={handleImageInput}
-              style={{ display: "none" }}
-            />
-            {form.images.length > 0 && (
-              <>
-                <div className="image-preview-grid">
-                  {form.images.map((src, index) => (
-                    <div className="image-chip" key={`new-item-image-${index}`}>
-                      <img src={src} alt={`תמונה ${index + 1}`} />
-                      <button type="button" aria-label="הסרת תמונה" onClick={() => removeFormImage(index)}>
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                <button type="button" className="btn-ghost" onClick={clearImage}>
-                  הסרת כל התמונות
-                </button>
-              </>
-            )}
+            <button className="btn-ghost" type="button" onClick={fetchInventory}>
+              רענון מלאי
+            </button>
+            <button className="btn-ghost" type="button" onClick={fetchCategories}>
+              רענון קטגוריות
+            </button>
           </div>
-          <button type="submit" disabled={submitting}>
-            {submitting ? "שולח..." : "הוספת פריט"}
-          </button>
-        </form>
+          {categoriesLoading ? (
+            <p>טוען קטגוריות...</p>
+          ) : categories.length === 0 ? (
+            <p className="form-helper">אין קטגוריות פעילות. בעלים יכולים להוסיף קטגוריה חדשה ממסך הקונסולה.</p>
+          ) : (
+            <p className="form-helper">בחרו קטגוריה עבור כל פריט ושמרו את השינויים.</p>
+          )}
+        </div>
 
         {error && <p>{error}</p>}
         {loading ? (
@@ -430,6 +295,7 @@ function InventoryAdmin() {
                   <tr>
                     <th>מזהה</th>
                     <th>שם מוצר</th>
+                    <th>קטגוריה</th>
                     <th>כמות</th>
                     <th>מחיר (₪)</th>
                     <th>תמונות</th>
@@ -441,13 +307,28 @@ function InventoryAdmin() {
                     const rowState = editing[item.id] ?? {
                       quantity: item.itemQuantity,
                       price: Number(item.itemPriceILS).toFixed(2),
-                      images: Array.isArray(item.itemImages) ? item.itemImages : []
+                      images: Array.isArray(item.itemImages) ? item.itemImages : [],
+                      categoryId: item.categoryId ? String(item.categoryId) : ""
                     };
                     const gallery = rowState.images || [];
                     return (
                       <tr key={item.id}>
                         <td>{item.id}</td>
                         <td>{item.itemName}</td>
+                        <td>
+                          <select
+                            value={rowState.categoryId || ""}
+                            onChange={(e) => handleEditChange(item.id, "categoryId", e.target.value)}
+                            disabled={categoriesLoading}
+                          >
+                            <option value="">בחרו קטגוריה</option>
+                            {categories.map((category) => (
+                              <option value={category.id} key={category.id}>
+                                {category.name}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
                         <td>
                           <input
                             type="number"

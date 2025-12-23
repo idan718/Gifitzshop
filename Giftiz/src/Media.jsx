@@ -1,34 +1,81 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import SearchBar from "./SearchBar";
 
 function Media() {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
-  const [filteredItems, setFilteredItems] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [activeCategoryId, setActiveCategoryId] = useState(null);
+  const [searchState, setSearchState] = useState({ active: false, items: [], categories: [] });
+  const [loadingItems, setLoadingItems] = useState(true);
+  const [loadingCategories, setLoadingCategories] = useState(true);
   const [popupItem, setPopupItem] = useState(null);
   const [popupQuantity, setPopupQuantity] = useState(1);
   const [popupImageIndex, setPopupImageIndex] = useState(0);
   const MAX_PER_ITEM = 20;
 
-  useEffect(() => {
-    const fetchItems = async () => {
-      try {
-        const res = await fetch("http://localhost:3001/items");
-        if (!res.ok) {
-          throw new Error("לא ניתן לטעון את המלאי");
-        }
-        const data = await res.json();
-        setItems(Array.isArray(data) ? data : []);
-        setFilteredItems(Array.isArray(data) ? data : []);
-      } catch (error) {
-        console.error("Inventory fetch failed", error);
-        setItems([]);
-        setFilteredItems([]);
+  const fetchItems = useCallback(async () => {
+    setLoadingItems(true);
+    try {
+      const res = await fetch("http://localhost:3001/items");
+      if (!res.ok) {
+        throw new Error("לא ניתן לטעון את המלאי");
       }
-    };
-    fetchItems();
+      const data = await res.json();
+      setItems(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error("Inventory fetch failed", error);
+      setItems([]);
+    } finally {
+      setLoadingItems(false);
+    }
   }, []);
+
+  const fetchCategories = useCallback(async () => {
+    setLoadingCategories(true);
+    try {
+      const res = await fetch("http://localhost:3001/categories");
+      if (!res.ok) {
+        throw new Error("לא ניתן לטעון קטגוריות");
+      }
+      const data = await res.json();
+      setCategories(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error("Category fetch failed", error);
+      setCategories([]);
+    } finally {
+      setLoadingCategories(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchItems();
+    fetchCategories();
+  }, [fetchItems, fetchCategories]);
+
+  const handleSearchResults = useCallback((result) => {
+    setSearchState({
+      active: true,
+      items: Array.isArray(result?.items) ? result.items : [],
+      categories: Array.isArray(result?.categories) ? result.categories : []
+    });
+  }, []);
+
+  const handleSearchReset = useCallback(() => {
+    setSearchState({ active: false, items: [], categories: [] });
+  }, []);
+
+  const handleCategorySelect = (categoryId) => {
+    setActiveCategoryId((current) => {
+      const normalizedId = categoryId === null ? null : Number(categoryId);
+      if (current === normalizedId) {
+        return null;
+      }
+      return normalizedId;
+    });
+    setSearchState({ active: false, items: [], categories: [] });
+  };
 
   const resolveGallery = (item) => {
     if (!item) {
@@ -150,6 +197,11 @@ function Media() {
   const popupGallery = popupItem ? resolveGallery(popupItem) : [];
   const popupImageSrc = popupGallery[popupImageIndex] || null;
 
+  const scopedItems = activeCategoryId ? items.filter((item) => Number(item.categoryId) === Number(activeCategoryId)) : items;
+  const displayedItems = searchState.active ? searchState.items : scopedItems;
+  const displayCategories = searchState.active && activeCategoryId === null ? searchState.categories : categories;
+  const activeCategoryName = activeCategoryId ? categories.find((category) => Number(category.id) === Number(activeCategoryId))?.name : null;
+
   return (
     <main className="page">
       <section className="surface stack">
@@ -158,43 +210,80 @@ function Media() {
           <p className="form-helper">הקישו על כל כרטיס כדי לצפות בו או להוסיף אותו לעגלה מיד.</p>
         </div>
 
-        <SearchBar items={items} setFilteredItems={setFilteredItems} />
+        {(loadingItems || loadingCategories) && (
+          <p className="form-helper">טוען נתונים עדכניים...</p>
+        )}
+
+        <SearchBar
+          activeCategoryId={activeCategoryId}
+          onResults={handleSearchResults}
+          onReset={handleSearchReset}
+        />
+
+        <div className="media-category-grid">
+          <div className={`media-category-card ${activeCategoryId === null ? "active" : ""}`}>
+            <button type="button" onClick={() => handleCategorySelect(null)}>
+              כל הקטגוריות
+            </button>
+          </div>
+          {displayCategories.map((category) => (
+            <div className={`media-category-card ${Number(category.id) === Number(activeCategoryId) ? "active" : ""}`} key={category.id}>
+              <button type="button" onClick={() => handleCategorySelect(category.id)}>
+                {category.name}
+              </button>
+            </div>
+          ))}
+        </div>
+        {activeCategoryName && (
+          <p className="form-helper">מציגים רק מוצרים מקטגוריית {activeCategoryName}. לחצו על "כל הקטגוריות" כדי לצאת.</p>
+        )}
+        {searchState.active && !displayedItems.length && (
+          <p className="empty-state">לא נמצאו תוצאות לחיפוש.</p>
+        )}
 
         <div className="media-grid">
-          {filteredItems.map((item) => {
-            const gallery = resolveGallery(item);
-            const coverImage = gallery[0] || null;
-            return (
-              <article
-                key={item.id}
-                className="media-card"
-              >
-                <button
-                  className="media-thumb"
-                  onClick={() => openPopup(item)}
-                  aria-label={`תצוגה מקדימה של ${item.itemName}`}
+          {!displayedItems.length && !loadingItems ? (
+            <p className="empty-state">אין מוצרים להצגה.</p>
+          ) : (
+            displayedItems.map((item) => {
+              const gallery = resolveGallery(item);
+              const coverImage = gallery[0] || null;
+              return (
+                <article
+                  key={item.id}
+                  className="media-card"
                 >
-                  {coverImage ? (
-                    <img src={coverImage} alt={`תמונה של ${item.itemName}`} />
-                  ) : (
-                    <div className="media-placeholder">
-                      <p>{item.itemName}</p>
+                  <button
+                    className="media-thumb"
+                    onClick={() => openPopup(item)}
+                    aria-label={`תצוגה מקדימה של ${item.itemName}`}
+                  >
+                    {coverImage ? (
+                      <img src={coverImage} alt={`תמונה של ${item.itemName}`} />
+                    ) : (
+                      <div className="media-placeholder">
+                        <p>{item.itemName}</p>
+                      </div>
+                    )}
+                  </button>
+                  <div className="stack">
+                    <div>
+                      <h3>{item.itemName}</h3>
+                      <p className="form-helper text-center">מחיר: ₪{Number(item.itemPriceILS).toFixed(2)}</p>
                     </div>
-                  )}
-                </button>
-                <div className="stack">
-                  <div>
-                    <h3>{item.itemName}</h3>
-                    <p className="form-helper text-center">מחיר: ₪{Number(item.itemPriceILS).toFixed(2)}</p>
+                    <button
+                      onClick={() => {
+                        addToCart(item);
+                        openPopup(item);
+                      }}
+                    >
+                      הוספה לעגלה
+                    </button>
                   </div>
-                  <button onClick={() => {
-                    addToCart(item);
-                    openPopup(item);
-                  }}>הוספה לעגלה</button>
-                </div>
-              </article>
-            );
-          })}
+                </article>
+              );
+            })
+          )}
         </div>
       </section>
 

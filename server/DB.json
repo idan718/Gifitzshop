@@ -1,0 +1,11 @@
+[
+  {
+    "id": 1,
+    "name": "idan",
+    "pwd": "$2b$10$sAAYDsU1VeMe6.pi8vcB1.70DY47qJrYVOGCm5sOSAYPqVZGhAW8O",
+    "userEmail": "idanisim.n1@gmail.com",
+    "admin": true,
+    "verified": true,
+    "owner": true
+  }
+]
