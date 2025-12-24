@@ -48,9 +48,8 @@ function Home() {
     <main className="page">
       <section className="home-hero surface">
         <div className="home-hero-content">
-          <p className="status-pill">bdwsasd אוצרות שנעשות כמו שצריך</p>
+          <p className="status-pill">אוצרות שנבחרו באהבה</p>
           <h1>ברוכים הבאים ל-Giftiz</h1>
-          <h1>niggers</h1>
           <p>גלו פריטים נבחרים, ניהלו את העגלה שלכם וסיימו תשלום בביטחון. חשבון אחד מסנכרן את כל המועדפים בכל עמוד.</p>
           {isLoggedIn && <span className="status-pill" aria-live="polite">ההתחברות פעילה</span>}
           <div className="home-primary-actions">

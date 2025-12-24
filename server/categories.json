@@ -2,5 +2,9 @@
   {
     "id": 1,
     "name": "3d printer"
+  },
+  {
+    "id": 2,
+    "name": "clothes"
   }
 ]

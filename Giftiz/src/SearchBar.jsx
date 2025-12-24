@@ -53,9 +53,12 @@ function SearchBar({ activeCategoryId, onResults, onReset }) {
   return (
     <div className="search-bar">
       <input
-        type="text"
+        type="search"
         placeholder={placeholder}
         value={query}
+        aria-label="חיפוש"
+        autoComplete="off"
+        enterKeyHint="search"
         onChange={(e) => setQuery(e.target.value)}
       />
     </div>

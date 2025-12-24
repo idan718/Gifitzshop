@@ -33,24 +33,53 @@ function SignUp() {
   return (
     <main className="page">
       <section className="surface stack">
-        <div className="stack">
+        <div className="section-header">
           <h2>צרו חשבון</h2>
           <p className="form-helper">נשלח קוד אימות כדי לוודא את כתובת הדוא"ל לפני שנפתח את הסשן.</p>
         </div>
         <form onSubmit={sendData}>
-          <input type="text" placeholder="שם משתמש"
-            onChange={(e) => setName(e.target.value)} required />
+          <div className="form-fields">
+            <div className="field">
+              <label htmlFor="signup-username">שם משתמש</label>
+              <input
+                id="signup-username"
+                type="text"
+                placeholder="שם משתמש"
+                autoComplete="username"
+                onChange={(e) => setName(e.target.value)}
+                required
+              />
+            </div>
 
-          <input type="password" placeholder="סיסמה"
-            onChange={(e) => setPwd(e.target.value)} required />
+            <div className="field">
+              <label htmlFor="signup-password">סיסמה</label>
+              <input
+                id="signup-password"
+                type="password"
+                placeholder="סיסמה"
+                autoComplete="new-password"
+                onChange={(e) => setPwd(e.target.value)}
+                required
+              />
+            </div>
 
-          <input type="email" placeholder="דואר אלקטרוני"
-            onChange={(e) => setUserEmail(e.target.value)} required />
+            <div className="field">
+              <label htmlFor="signup-email">דואר אלקטרוני</label>
+              <input
+                id="signup-email"
+                type="email"
+                placeholder="דואר אלקטרוני"
+                autoComplete="email"
+                onChange={(e) => setUserEmail(e.target.value)}
+                required
+              />
+            </div>
 
-          <button type="submit">הרשמה</button>
+            <button type="submit">הרשמה</button>
+          </div>
         </form>
 
-        {message && <p>{message}</p>}
+        {message && <p className="alert info" role="status" aria-live="polite">{message}</p>}
         <div className="nav-grid">
           <button className="btn-ghost" onClick={() => navigate("/login")}>כבר יש לכם חשבון?</button>
           <button onClick={() => navigate("/")}>חזרה לבית</button>

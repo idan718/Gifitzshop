@@ -1,0 +1,11 @@
+[
+  {
+    "id": "b1ef8c11-dcfa-498d-972d-76152325997c",
+    "userId": 1,
+    "tokenHash": "989ae374a43a145cc58a37051d1a5f66b62a4a246606b7a2e4466044b38584ff",
+    "createdAt": 1766488849602,
+    "lastUsedAt": 1766489724860,
+    "expiresAt": 1774265724860,
+    "label": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
+  }
+]

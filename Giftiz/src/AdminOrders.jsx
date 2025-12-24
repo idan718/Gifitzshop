@@ -1,0 +1,247 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+
+const STATUS_LABELS = {
+  pending: "בטיפול",
+  ready: "מוכן",
+  deleted: "נמחק"
+};
+
+function safeString(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value);
+}
+
+function formatMaybeIso(isoString) {
+  if (!isoString) {
+    return "";
+  }
+  try {
+    const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) {
+      return "";
+    }
+    return new Intl.DateTimeFormat("he-IL", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: "Asia/Jerusalem"
+    }).format(date);
+  } catch {
+    return "";
+  }
+}
+
+export default function AdminOrders() {
+  const navigate = useNavigate();
+  const [sessionId, setSessionId] = useState(() => (typeof window !== "undefined" ? localStorage.getItem("sessionId") : null));
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [actingId, setActingId] = useState(null);
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    const syncSession = () => setSessionId(localStorage.getItem("sessionId"));
+    window.addEventListener("storage", syncSession);
+    window.addEventListener("giftiz-session-change", syncSession);
+    return () => {
+      window.removeEventListener("storage", syncSession);
+      window.removeEventListener("giftiz-session-change", syncSession);
+    };
+  }, []);
+
+  const fetchOrders = useCallback(async () => {
+    if (!sessionId) {
+      setError("נדרש להתחבר עם חשבון מנהל.");
+      setOrders([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("http://localhost:3001/admin/orders", {
+        headers: {
+          "Content-Type": "application/json",
+          "x-session-id": sessionId
+        }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "לא ניתן לטעון הזמנות");
+      }
+      setOrders(Array.isArray(data.orders) ? data.orders : []);
+    } catch (err) {
+      setError(err.message || "לא ניתן לטעון הזמנות");
+      setOrders([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
+    fetchOrders();
+  }, [fetchOrders]);
+
+  const normalizedQuery = query.trim().toLowerCase();
+
+  const filteredOrders = useMemo(() => {
+    const sorted = [...orders].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    if (!normalizedQuery) {
+      return sorted;
+    }
+
+    return sorted.filter((order) => {
+      const haystack = [
+        safeString(order.id),
+        safeString(order.userEmail),
+        safeString(order.createdAt),
+        safeString(order.createdAtHuman),
+        safeString(order.paymentIntentId),
+        safeString(order.status),
+        ...(Array.isArray(order.items) ? order.items.flatMap((item) => [safeString(item.name), safeString(item.id)]) : [])
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(normalizedQuery);
+    });
+  }, [orders, normalizedQuery]);
+
+  const removeOrderFromView = (orderId) => {
+    setOrders((prev) => prev.filter((order) => Number(order.id) !== Number(orderId)));
+  };
+
+  const markReady = async (orderId) => {
+    if (!sessionId) {
+      setError("נדרש להתחבר עם חשבון מנהל.");
+      return;
+    }
+
+    setActingId(orderId);
+    setError("");
+    try {
+      const res = await fetch(`http://localhost:3001/admin/orders/${orderId}/ready`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "x-session-id": sessionId
+        }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "לא ניתן לסמן מוכן");
+      }
+      removeOrderFromView(orderId);
+    } catch (err) {
+      setError(err.message || "לא ניתן לסמן מוכן");
+    } finally {
+      setActingId(null);
+    }
+  };
+
+  const deleteOrder = async (orderId) => {
+    if (!sessionId) {
+      setError("נדרש להתחבר עם חשבון מנהל.");
+      return;
+    }
+
+    const confirmed = window.confirm("האם אתם בטוחים שברצונכם למחוק את ההזמנה?");
+    if (!confirmed) {
+      return;
+    }
+
+    setActingId(orderId);
+    setError("");
+    try {
+      const res = await fetch(`http://localhost:3001/admin/orders/${orderId}`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "x-session-id": sessionId
+        }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "לא ניתן למחוק הזמנה");
+      }
+      removeOrderFromView(orderId);
+    } catch (err) {
+      setError(err.message || "לא ניתן למחוק הזמנה");
+    } finally {
+      setActingId(null);
+    }
+  };
+
+  return (
+    <main className="page">
+      <section className="surface stack">
+        <div className="stack">
+          <h2>ניהול הזמנות</h2>
+          <p className="form-helper">הזמנות פתוחות (שולמו). תוכלו לסמן "מוכן" או למחוק.</p>
+        </div>
+
+        <div className="stack">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="חיפוש (מספר הזמנה, אימייל, מוצר...)"
+            aria-label="חיפוש הזמנות"
+          />
+          <div className="cta-row">
+            <button type="button" className="btn-ghost" onClick={fetchOrders} disabled={loading}>רענון</button>
+            <button type="button" className="btn-ghost" onClick={() => navigate("/admin")}>חזרה למנהל</button>
+          </div>
+        </div>
+
+        {error && <p>{error}</p>}
+        {loading && <p>טוען הזמנות...</p>}
+
+        {!loading && filteredOrders.length === 0 ? (
+          <p className="empty-state">אין הזמנות פתוחות</p>
+        ) : (
+          <div className="stack">
+            {filteredOrders.map((order) => {
+              const createdLabel = order.createdAtHuman || formatMaybeIso(order.createdAt) || "";
+              const statusLabel = STATUS_LABELS[order.status] || safeString(order.status) || "בטיפול";
+
+              return (
+                <details key={order.id} className="surface" style={{ padding: "1rem" }}>
+                  <summary style={{ cursor: "pointer" }}>
+                    הזמנה #{order.id} · {order.userEmail || ""} · {statusLabel} · {createdLabel}
+                  </summary>
+
+                  <div className="stack" style={{ marginTop: "0.85rem" }}>
+                    <div><strong>PaymentIntent:</strong> {order.paymentIntentId || ""}</div>
+                    <div><strong>סכום:</strong> ₪{Number(order.totalILS || 0).toFixed(2)}</div>
+
+                    <div className="stack" style={{ gap: "0.5rem" }}>
+                      <strong>פריטים</strong>
+                      {(order.items || []).map((item) => (
+                        <div key={`${order.id}-${item.id}-${item.name}`} className="surface" style={{ padding: "0.75rem" }}>
+                          {item.quantity || 0}× {item.name || "פריט"} — ₪{Number(item.priceILS || 0).toFixed(2)}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="cta-row">
+                      <button type="button" onClick={() => markReady(order.id)} disabled={actingId === order.id}>
+                        {actingId === order.id ? "מעבד..." : "הזמנה מוכנה"}
+                      </button>
+                      <button type="button" className="btn-ghost" onClick={() => deleteOrder(order.id)} disabled={actingId === order.id}>
+                        מחיקת הזמנה
+                      </button>
+                    </div>
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}

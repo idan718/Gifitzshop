@@ -57,35 +57,51 @@ function PasswordRecovery() {
   return (
     <main className="page">
       <section className="surface stack">
-        <h2>שחזור סיסמה</h2>
-        <p className="form-helper">הזינו את כתובת הדוא"ל איתה נרשמתם ונשלח קוד אימות לשחזור.</p>
+        <div className="section-header">
+          <h2>שחזור סיסמה</h2>
+          <p className="form-helper">הזינו את כתובת הדוא"ל איתה נרשמתם ונשלח קוד אימות לשחזור.</p>
+        </div>
 
-        <input
-          type="email"
-          placeholder={'דוא"ל'}
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-        <button onClick={requestCode} disabled={loading}>
-          {loading && step === "request" ? "שולח..." : "שליחת קוד שחזור"}
-        </button>
+        <div className="form-fields">
+          <div className="field">
+            <label htmlFor="recovery-email">דוא"ל</label>
+            <input
+              id="recovery-email"
+              type="email"
+              placeholder={'דוא"ל'}
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+
+          <button onClick={requestCode} disabled={loading}>
+            {loading && step === "request" ? "שולח..." : "שליחת קוד שחזור"}
+          </button>
+        </div>
 
         {step === "verify" && (
-          <div className="stack">
+          <div className="form-fields">
             <p className="form-helper">הקלידו את הקוד בן שש הספרות שקיבלתם במייל.</p>
-            <input
-              type="text"
-              placeholder="קוד אימות"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-            />
+            <div className="field">
+              <label htmlFor="recovery-code">קוד אימות</label>
+              <input
+                id="recovery-code"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="קוד אימות"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+              />
+            </div>
             <button onClick={verifyCode} disabled={loading}>
               {loading && step === "verify" ? "מאמת..." : "אישור והמשך"}
             </button>
           </div>
         )}
 
-        {status && <p>{status}</p>}
+        {status && <p className="alert info" role="status" aria-live="polite">{status}</p>}
         <div className="nav-grid">
           <button className="btn-ghost" onClick={() => navigate("/login")}>חזרה להתחברות</button>
           <button onClick={() => navigate("/")}>חזרה לבית</button>

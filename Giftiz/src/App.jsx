@@ -21,6 +21,9 @@ import InventoryNewItem from "./InventoryNewItem.jsx";
 import OwnerSecurity from "./OwnerSecurity.jsx";
 import PasswordRecovery from "./PasswordRecovery.jsx";
 import PasswordReset from "./PasswordReset.jsx";
+import Orders from "./Orders.jsx";
+import AdminOrders from "./AdminOrders.jsx";
+import { TRUSTED_DEVICE_STORAGE_KEY } from "./authStorage";
 
 function App() {
   const navigate = useNavigate();
@@ -77,6 +80,41 @@ function App() {
     setSessionReady(true);
   }, [loadSessionRoles]);
 
+  const tryTrustedAutoLogin = useCallback(async () => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const existingSession = localStorage.getItem("sessionId");
+    if (existingSession) {
+      return;
+    }
+    const token = localStorage.getItem(TRUSTED_DEVICE_STORAGE_KEY);
+    if (!token) {
+      return;
+    }
+    try {
+      const res = await fetch("http://localhost:3001/login/trusted", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Trusted login failed");
+      }
+      if (data.sessionId) {
+        localStorage.setItem("sessionId", data.sessionId);
+      }
+      if (data.trustedDeviceToken) {
+        localStorage.setItem(TRUSTED_DEVICE_STORAGE_KEY, data.trustedDeviceToken);
+      }
+      window.dispatchEvent(new Event("giftiz-session-change"));
+    } catch {
+      // If the token is invalid/expired, remove it so we don't keep retrying.
+      localStorage.removeItem(TRUSTED_DEVICE_STORAGE_KEY);
+    }
+  }, []);
+
   useEffect(() => {
     if (typeof window === "undefined") {
       return undefined;
@@ -88,6 +126,7 @@ function App() {
 
     window.addEventListener("storage", handleSessionChange);
     window.addEventListener("giftiz-session-change", handleSessionChange);
+    tryTrustedAutoLogin();
     syncSessionState();
 
     return () => {
@@ -110,6 +149,7 @@ function App() {
       }
     }
     localStorage.removeItem("sessionId");
+    localStorage.removeItem(TRUSTED_DEVICE_STORAGE_KEY);
     setIsLoggedIn(false);
     setIsAdmin(false);
     setIsOwner(false);
@@ -146,6 +186,7 @@ function App() {
           <NavLink to="/about">אודות</NavLink>
           <NavLink to="/support">תמיכה</NavLink>
           <NavLink to="/contact">צור קשר</NavLink>
+          {isLoggedIn && <NavLink to="/orders">הזמנות</NavLink>}
         </nav>
         <div className="header-cta">
           <NavLink to="/cart" className="nav-pill">עגלה</NavLink>
@@ -178,10 +219,26 @@ function App() {
           <Route path="/cart" element={<Cart/>} />
           <Route path="/thank-you" element={<ThankYou />} />
           <Route
+            path="/orders"
+            element={(
+              <RouteGuard allow={isLoggedIn}>
+                <Orders />
+              </RouteGuard>
+            )}
+          />
+          <Route
             path="/admin"
             element={(
               <RouteGuard allow={isLoggedIn && isAdmin}>
                 <Admin />
+              </RouteGuard>
+            )}
+          />
+          <Route
+            path="/admin/orders"
+            element={(
+              <RouteGuard allow={isLoggedIn && isAdmin}>
+                <AdminOrders />
               </RouteGuard>
             )}
           />

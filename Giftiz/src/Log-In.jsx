@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { TRUSTED_DEVICE_STORAGE_KEY } from "./authStorage";
 
 function LogIn() {
   const navigate = useNavigate();
@@ -12,6 +13,19 @@ function LogIn() {
   const [loginLoading, setLoginLoading] = useState(false);
 
   const [loginVerifying, setLoginVerifying] = useState(false);
+  const [rememberDevice, setRememberDevice] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    return Boolean(localStorage.getItem(TRUSTED_DEVICE_STORAGE_KEY));
+  });
+
+  const storedTrustedDeviceToken = () => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    return localStorage.getItem(TRUSTED_DEVICE_STORAGE_KEY);
+  };
 
   const resetFlows = () => {
     setNeedsLoginCode(false);
@@ -19,8 +33,11 @@ function LogIn() {
     setLoginCode("");
   };
 
-  const completeLogin = (sessionId) => {
+  const completeLogin = (sessionId, trustedDeviceToken) => {
     localStorage.setItem("sessionId", sessionId);
+    if (trustedDeviceToken) {
+      localStorage.setItem(TRUSTED_DEVICE_STORAGE_KEY, trustedDeviceToken);
+    }
     window.dispatchEvent(new Event("giftiz-session-change"));
     resetFlows();
     navigate("/");
@@ -30,15 +47,23 @@ function LogIn() {
     setMsg("");
     resetFlows();
     setLoginLoading(true);
+    const trustedDeviceToken = rememberDevice ? storedTrustedDeviceToken() : null;
+    if (!rememberDevice) {
+      localStorage.removeItem(TRUSTED_DEVICE_STORAGE_KEY);
+    }
     try {
       const res = await fetch("http://localhost:3001/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, pwd })
+        body: JSON.stringify({ name, pwd, rememberDevice, trustedDeviceToken })
       });
 
       const data = await res.json();
       setMsg(data.message);
+
+      if (data.trustedDeviceRejected) {
+        localStorage.removeItem(TRUSTED_DEVICE_STORAGE_KEY);
+      }
 
       if (res.ok && data.ticketId) {
         setPendingTicketId(data.ticketId);
@@ -46,7 +71,7 @@ function LogIn() {
           setNeedsLoginCode(true);
         }
       } else if (res.ok && data.sessionId) {
-        completeLogin(data.sessionId);
+        completeLogin(data.sessionId, data.trustedDeviceToken);
       }
     } catch (error) {
       setMsg("לא ניתן להתחבר לשירות ההתחברות");
@@ -65,7 +90,7 @@ function LogIn() {
       const res = await fetch("http://localhost:3001/login/verify-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticketId: pendingTicketId, code: loginCode })
+        body: JSON.stringify({ ticketId: pendingTicketId, code: loginCode, rememberDevice })
       });
       const data = await res.json();
       setMsg(data.message);
@@ -76,7 +101,7 @@ function LogIn() {
       setLoginCode("");
       setPendingTicketId("");
       if (data.sessionId) {
-        completeLogin(data.sessionId);
+        completeLogin(data.sessionId, data.trustedDeviceToken);
       }
     } catch (error) {
       setMsg("לא ניתן לאמת את קוד ההתחברות.");
@@ -88,17 +113,42 @@ function LogIn() {
   return (
     <main className="page">
       <section className="surface stack">
-        <div className="stack">
+        <div className="section-header">
           <h2>ברוכים השבים</h2>
           <p className="form-helper">התחברו כדי לשמור את העגלה מסונכרנת ולהמשיך בתשלום.</p>
         </div>
 
-        <div className="stack">
-          <input type="text" placeholder="שם משתמש"
-            onChange={(e) => setName(e.target.value)} />
+        <div className="form-fields">
+          <div className="field">
+            <label htmlFor="login-username">שם משתמש</label>
+            <input
+              id="login-username"
+              type="text"
+              placeholder="שם משתמש"
+              autoComplete="username"
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
 
-          <input type="password" placeholder="סיסמה"
-            onChange={(e) => setPwd(e.target.value)} />
+          <div className="field">
+            <label htmlFor="login-password">סיסמה</label>
+            <input
+              id="login-password"
+              type="password"
+              placeholder="סיסמה"
+              autoComplete="current-password"
+              onChange={(e) => setPwd(e.target.value)}
+            />
+          </div>
+
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={rememberDevice}
+              onChange={(e) => setRememberDevice(e.target.checked)}
+            />
+            לזכור אותי במכשיר זה
+          </label>
 
           <button onClick={sendLogin} disabled={loginLoading}>
             {loginLoading ? "שולח קוד..." : "שליחת קוד התחברות"}
@@ -106,21 +156,27 @@ function LogIn() {
         </div>
 
         {needsLoginCode && (
-          <div className="stack">
+          <div className="form-fields">
             <p className="form-helper">הזינו את קוד ההתחברות החד-פעמי שנשלח אליכם במייל.</p>
-            <input
-              type="text"
-              placeholder="קוד אימות"
-              value={loginCode}
-              onChange={(e) => setLoginCode(e.target.value)}
-            />
+            <div className="field">
+              <label htmlFor="login-code">קוד אימות</label>
+              <input
+                id="login-code"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="קוד אימות"
+                value={loginCode}
+                onChange={(e) => setLoginCode(e.target.value)}
+              />
+            </div>
             <button onClick={verifyLoginCode} disabled={loginVerifying}>
               {loginVerifying ? "מאמת..." : "אישור קוד"}
             </button>
           </div>
         )}
 
-        {msg && <p>{msg}</p>}
+        {msg && <p className="alert info" role="status" aria-live="polite">{msg}</p>}
         <div className="nav-grid">
           <button onClick={() => navigate("/signup")}>צרו חשבון</button>
           <button onClick={() => navigate("/login/email")}>התחברות במייל</button>
