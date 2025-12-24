@@ -1215,7 +1215,8 @@ app.post('/login-email', authLimiter, async (req, res) => {
   const clientDeviceLabel = sanitizeText(req.headers['user-agent'] || '').slice(0, 80);
   let trustedDeviceRejected = false;
   if (!validateRequiredFields([
-    { value: email, name: 'Email', type: 'email' }
+    { value: email, name: 'Email', type: 'email' },
+    { value: pwd, name: 'Password', type: 'password' }
   ], res)) {
     return;
   }
@@ -1231,11 +1232,9 @@ app.post('/login-email', authLimiter, async (req, res) => {
   }
 
   const normalizedPassword = typeof pwd === 'string' ? pwd.trim() : String(pwd ?? '');
-  if (normalizedPassword) {
-    const match = await bcrypt.compare(normalizedPassword, user.pwd);
-    if (!match) {
-      return res.status(401).json({ message: 'פרטי התחברות שגויים.' });
-    }
+  const match = await bcrypt.compare(normalizedPassword, user.pwd);
+  if (!match) {
+    return res.status(401).json({ message: 'פרטי התחברות שגויים.' });
   }
 
   if (trustedDeviceToken) {
@@ -1291,61 +1290,96 @@ app.post('/login-email', authLimiter, async (req, res) => {
 });
 
 app.post('/login-email/verify-code', authLimiter, (req, res) => {
-  const { ticketId, code, rememberDevice } = req.body || {};
-  if (!ticketId || !code) {
-    return res.status(400).json({ message: 'נדרש מזהה אסימון וקוד אימות.' });
+  const { ticketId, code, pwd, rememberDevice } = req.body || {};
+  if (!validateRequiredFields([
+    { value: ticketId, name: 'Ticket ID' },
+    { value: code, name: 'Verification code' },
+    { value: pwd, name: 'Password', type: 'password' }
+  ], res)) {
+    return;
   }
 
-  const result = consumeLoginTicket(ticketId, code, 'email');
-  switch (result.status) {
-    case 'invalid':
-      return res.status(400).json({ message: 'הבקשה אינה תקינה.' });
-    case 'not_found':
-      return res.status(404).json({ message: 'הבקשה לא נמצאה או שפג תוקפה.' });
-    case 'method_mismatch':
-      return res.status(400).json({ message: 'סוג ההתחברות אינו תואם.' });
-    case 'expired':
-      return res.status(410).json({ message: 'תוקף קוד האימות פג. נסו שוב.' });
-    case 'mismatch':
-      return res.status(400).json({ message: 'קוד האימות שגוי.' });
-    case 'ok':
-      break;
-    default:
+  const safeTicketId = getSafeText(ticketId);
+  const normalizedCode = sanitizeText(String(code ?? ''));
+  if (!safeTicketId || !normalizedCode) {
+    return res.status(400).json({ message: 'הבקשה אינה תקינה.' });
+  }
+
+  const tickets = loadLoginTickets();
+  const index = tickets.findIndex((entry) => entry.id === safeTicketId);
+  if (index === -1) {
+    return res.status(404).json({ message: 'הבקשה לא נמצאה או שפג תוקפה.' });
+  }
+
+  const ticket = tickets[index];
+  if (ticket.method !== 'email') {
+    return res.status(400).json({ message: 'סוג ההתחברות אינו תואם.' });
+  }
+
+  const now = Date.now();
+  if (ticket.expiresAt && now > ticket.expiresAt) {
+    tickets.splice(index, 1);
+    saveLoginTickets(tickets);
+    return res.status(410).json({ message: 'תוקף קוד האימות פג. נסו שוב.' });
+  }
+
+  if (String(ticket.code) !== normalizedCode) {
+    return res.status(400).json({ message: 'קוד האימות שגוי.' });
+  }
+
+  const users = loadUsers();
+  const user = users.find((entry) => String(entry.id) === String(ticket.userId));
+  if (!user) {
+    return res.status(404).json({ message: 'הבקשה לא נמצאה או שפג תוקפה.' });
+  }
+  if (!user.verified) {
+    return res.status(403).json({ message: 'החשבון עדיין לא אומת. אנא השלימו תהליך הרשמה.' });
+  }
+
+  const normalizedPassword = typeof pwd === 'string' ? pwd.trim() : String(pwd ?? '');
+  bcrypt.compare(normalizedPassword, user.pwd)
+    .then((match) => {
+      if (!match) {
+        return res.status(401).json({ message: 'פרטי התחברות שגויים.' });
+      }
+
+      tickets.splice(index, 1);
+      saveLoginTickets(tickets);
+
+      const wantsTrustedDevice = typeof rememberDevice === 'boolean'
+        ? rememberDevice
+        : Boolean(ticket.rememberDevice);
+      let trustedDeviceToken = null;
+      if (wantsTrustedDevice) {
+        try {
+          const deviceResult = createTrustedDeviceForUser(ticket.userId, { label: ticket.deviceLabel });
+          trustedDeviceToken = deviceResult?.token || null;
+        } catch (error) {
+          console.error('Failed to persist trusted device (email)', error);
+        }
+      }
+
+      const session = createSession(ticket.userId, {
+        admin: Boolean(ticket.admin),
+        owner: Boolean(ticket.owner),
+        loggedIn: true
+      });
+
+      return res.status(200).json({
+        message: 'התחברות הושלמה בהצלחה.',
+        sessionId: session.id,
+        userId: session.userId,
+        admin: Boolean(session.admin),
+        owner: Boolean(session.owner),
+        trustedDeviceToken
+      });
+    })
+    .catch((error) => {
+      console.error('Email login password check failed', error);
       return res.status(500).json({ message: 'שגיאת התחברות לא צפויה.' });
-  }
+    });
 
-  const ticket = result.ticket;
-  if (!ticket) {
-    return res.status(500).json({ message: 'שגיאת התחברות לא צפויה.' });
-  }
-
-  const wantsTrustedDevice = typeof rememberDevice === 'boolean'
-    ? rememberDevice
-    : Boolean(ticket.rememberDevice);
-  let trustedDeviceToken = null;
-  if (wantsTrustedDevice) {
-    try {
-      const deviceResult = createTrustedDeviceForUser(ticket.userId, { label: ticket.deviceLabel });
-      trustedDeviceToken = deviceResult?.token || null;
-    } catch (error) {
-      console.error('Failed to persist trusted device (email)', error);
-    }
-  }
-
-  const session = createSession(ticket.userId, {
-    admin: Boolean(ticket.admin),
-    owner: Boolean(ticket.owner),
-    loggedIn: true
-  });
-
-  return res.status(200).json({
-    message: 'התחברות הושלמה בהצלחה.',
-    sessionId: session.id,
-    userId: session.userId,
-    admin: Boolean(session.admin),
-    owner: Boolean(session.owner),
-    trustedDeviceToken
-  });
+  return;
 });
 
 app.post('/login/trusted', authLimiter, (req, res) => {

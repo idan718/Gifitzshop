@@ -9,8 +9,10 @@ function About()
     return(
         <main className="page">
             <section className="surface stack">
-                <h1>אודות Giftiz</h1>
-                <p className="form-helper">Giftiz היא סביבת ניסוי פשוטה להתנסות בסשנים, עגלות ותשלומים. השתמשו בה כדי להבין מה הלקוחות שלכם יחוו בהמשך.</p>
+                <div className="section-header">
+                    <h1>אודות Giftiz</h1>
+                    <p className="form-helper">Giftiz היא סביבת ניסוי פשוטה להתנסות בסשנים, עגלות ותשלומים. השתמשו בה כדי להבין מה הלקוחות שלכם יחוו בהמשך.</p>
+                </div>
                 <div className="nav-grid">
                     <button onClick={() => navigate("/")}>חזרה לבית</button>
                     <button className="btn-ghost" onClick={() => navigate("/media")}>עיון במוצרים</button>

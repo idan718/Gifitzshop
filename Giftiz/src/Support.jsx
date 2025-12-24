@@ -6,7 +6,7 @@ function Support() {
     return (
         <main className="page">
             <section className="surface stack support-container">
-                <div className="stack">
+                <div className="section-header">
                     <h1>מרכז התמיכה</h1>
                     <p className="form-helper">
                         צרו קשר עם צוות Giftiz לעזרה בהזמנות, בגישה לחשבון או בכל דבר אחר שתצטרכו.

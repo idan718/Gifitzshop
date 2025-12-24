@@ -23,11 +23,11 @@ function formatMaybeIso(isoString) {
     if (Number.isNaN(date.getTime())) {
       return "";
     }
-    return new Intl.DateTimeFormat("he-IL", {
-      dateStyle: "medium",
+    return date.toLocaleString("he-IL", {
+      dateStyle: "full",
       timeStyle: "short",
       timeZone: "Asia/Jerusalem"
-    }).format(date);
+    });
   } catch {
     return "";
   }
@@ -179,38 +179,40 @@ export default function AdminOrders() {
   return (
     <main className="page">
       <section className="surface stack">
-        <div className="stack">
+        <div className="section-header">
           <h2>ניהול הזמנות</h2>
           <p className="form-helper">הזמנות פתוחות (שולמו). תוכלו לסמן "מוכן" או למחוק.</p>
         </div>
 
-        <div className="stack">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="חיפוש (מספר הזמנה, אימייל, מוצר...)"
-            aria-label="חיפוש הזמנות"
-          />
-          <div className="cta-row">
-            <button type="button" className="btn-ghost" onClick={fetchOrders} disabled={loading}>רענון</button>
-            <button type="button" className="btn-ghost" onClick={() => navigate("/admin")}>חזרה למנהל</button>
+        <div className="toolbar">
+          <div className="toolbar-grow">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="חיפוש (מספר הזמנה, אימייל, מוצר...)"
+              aria-label="חיפוש הזמנות"
+            />
           </div>
+          <button type="button" className="btn-ghost" onClick={fetchOrders} disabled={loading}>
+            {loading ? "מרענן..." : "רענון"}
+          </button>
+          <button type="button" className="btn-ghost" onClick={() => navigate("/admin")}>חזרה למנהל</button>
         </div>
 
-        {error && <p>{error}</p>}
-        {loading && <p>טוען הזמנות...</p>}
+        {error && <p className="alert error" role="status" aria-live="polite">{error}</p>}
+        {loading && <p className="alert info" role="status" aria-live="polite">טוען הזמנות...</p>}
 
         {!loading && filteredOrders.length === 0 ? (
           <p className="empty-state">אין הזמנות פתוחות</p>
         ) : (
           <div className="stack">
             {filteredOrders.map((order) => {
-              const createdLabel = order.createdAtHuman || formatMaybeIso(order.createdAt) || "";
+              const createdLabel = formatMaybeIso(order.createdAt) || "";
               const statusLabel = STATUS_LABELS[order.status] || safeString(order.status) || "בטיפול";
 
               return (
-                <details key={order.id} className="surface" style={{ padding: "1rem" }}>
-                  <summary style={{ cursor: "pointer" }}>
+                <details key={order.id} className="surface">
+                  <summary>
                     הזמנה #{order.id} · {order.userEmail || ""} · {statusLabel} · {createdLabel}
                   </summary>
 

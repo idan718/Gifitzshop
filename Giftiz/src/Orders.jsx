@@ -22,11 +22,11 @@ function formatMaybeIso(isoString) {
     if (Number.isNaN(date.getTime())) {
       return "";
     }
-    return new Intl.DateTimeFormat("he-IL", {
-      dateStyle: "medium",
+    return date.toLocaleString("he-IL", {
+      dateStyle: "full",
       timeStyle: "short",
       timeZone: "Asia/Jerusalem"
-    }).format(date);
+    });
   } catch {
     return "";
   }
@@ -137,9 +137,9 @@ export default function Orders() {
         ) : (
           <div className="stack">
             {filteredOrders.map((order) => {
-              const createdLabel = order.createdAtHuman || formatMaybeIso(order.createdAt) || "";
+              const createdLabel = formatMaybeIso(order.createdAt) || "";
               const statusLabel = STATUS_LABELS[order.status] || safeString(order.status) || "בטיפול";
-              const readyLabel = order.readyAtHuman || formatMaybeIso(order.readyAt);
+              const readyLabel = formatMaybeIso(order.readyAt);
 
               return (
                 <details key={order.id} className="surface">

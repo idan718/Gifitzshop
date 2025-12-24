@@ -10,10 +10,21 @@ function Media() {
   const [searchState, setSearchState] = useState({ active: false, items: [], categories: [] });
   const [loadingItems, setLoadingItems] = useState(true);
   const [loadingCategories, setLoadingCategories] = useState(true);
+  const [cartStatus, setCartStatus] = useState({ text: "", type: "info" });
   const [popupItem, setPopupItem] = useState(null);
   const [popupQuantity, setPopupQuantity] = useState(1);
   const [popupImageIndex, setPopupImageIndex] = useState(0);
   const MAX_PER_ITEM = 20;
+
+  useEffect(() => {
+    if (!cartStatus.text) {
+      return undefined;
+    }
+    const timer = setTimeout(() => {
+      setCartStatus({ text: "", type: "info" });
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [cartStatus.text]);
 
   const fetchItems = useCallback(async () => {
     setLoadingItems(true);
@@ -66,7 +77,7 @@ function Media() {
     setSearchState({ active: false, items: [], categories: [] });
   }, []);
 
-  const handleCategorySelect = (categoryId) => {
+  const handleCategorySelect = useCallback((categoryId) => {
     setActiveCategoryId((current) => {
       const normalizedId = categoryId === null ? null : Number(categoryId);
       if (current === normalizedId) {
@@ -75,7 +86,7 @@ function Media() {
       return normalizedId;
     });
     setSearchState({ active: false, items: [], categories: [] });
-  };
+  }, []);
 
   const resolveGallery = (item) => {
     if (!item) {
@@ -124,15 +135,17 @@ function Media() {
   };
 
   const addToCart = async (item, desiredQuantity = 1) => {
+    setCartStatus({ text: "", type: "info" });
     const sessionId = localStorage.getItem("sessionId");
     if (!sessionId) {
-      alert("אנא התחברו כדי להוסיף פריטים לעגלה");
+      setCartStatus({ text: "אנא התחברו כדי להוסיף פריטים לעגלה", type: "error" });
+      navigate("/login");
       return;
     }
 
     const maxAllowed = getMaxPurchasable(item);
     if (maxAllowed === 0) {
-      alert("המוצר אזל מהמלאי.");
+      setCartStatus({ text: "המוצר אזל מהמלאי.", type: "error" });
       return;
     }
 
@@ -146,16 +159,19 @@ function Media() {
           id: item.id,
           name: item.itemName,
           priceILS: item.itemPriceILS,
-          quantity
+          quantity,
+          imageUrl: resolveGallery(item)[0] || ""
         })
       });
 
+      const data = await res.json();
       if (!res.ok) {
-        const data = await res.json();
         throw new Error(data.message || "לא ניתן להוסיף את הפריט");
       }
+
+      setCartStatus({ text: "הפריט נוסף לעגלה", type: "success" });
     } catch (error) {
-      alert(error.message || "הוספת הפריט לעגלה נכשלה");
+      setCartStatus({ text: error.message || "הוספת הפריט לעגלה נכשלה", type: "error" });
     }
   };
 
@@ -165,6 +181,17 @@ function Media() {
     setPopupQuantity(limit > 0 ? 1 : 0);
     setPopupImageIndex(0);
   };
+
+  const handleSelectCategoryFromSuggestion = useCallback((categoryId) => {
+    handleCategorySelect(categoryId);
+  }, [handleCategorySelect]);
+
+  const handleSelectItemFromSuggestion = useCallback((itemId) => {
+    const found = items.find((entry) => Number(entry?.id) === Number(itemId));
+    if (found) {
+      openPopup(found);
+    }
+  }, [items, openPopup]);
 
   const closePopup = () => {
     setPopupItem(null);
@@ -199,7 +226,8 @@ function Media() {
 
   const scopedItems = activeCategoryId ? items.filter((item) => Number(item.categoryId) === Number(activeCategoryId)) : items;
   const displayedItems = searchState.active ? searchState.items : scopedItems;
-  const displayCategories = searchState.active && activeCategoryId === null ? searchState.categories : categories;
+  // Categories should always remain visible, even while search is active.
+  const displayCategories = categories;
   const activeCategoryName = activeCategoryId ? categories.find((category) => Number(category.id) === Number(activeCategoryId))?.name : null;
 
   return (
@@ -210,6 +238,12 @@ function Media() {
           <p className="form-helper">הקישו על כל כרטיס כדי לצפות בו או להוסיף אותו לעגלה מיד.</p>
         </div>
 
+        {!popupItem && cartStatus.text && (
+          <p className={`alert ${cartStatus.type}`} role="status" aria-live="polite">
+            {cartStatus.text}
+          </p>
+        )}
+
         {(loadingItems || loadingCategories) && (
           <p className="form-helper">טוען נתונים עדכניים...</p>
         )}
@@ -218,22 +252,29 @@ function Media() {
           activeCategoryId={activeCategoryId}
           onResults={handleSearchResults}
           onReset={handleSearchReset}
+          onSelectCategory={handleSelectCategoryFromSuggestion}
+          onSelectItem={handleSelectItemFromSuggestion}
         />
 
-        <div className="media-category-grid">
-          <div className={`media-category-card ${activeCategoryId === null ? "active" : ""}`}>
-            <button type="button" onClick={() => handleCategorySelect(null)}>
-              כל הקטגוריות
-            </button>
-          </div>
+        <nav className="category-nav" aria-label="קטגוריות">
+          <button
+            type="button"
+            className={`category-pill ${activeCategoryId === null ? "active" : ""}`}
+            onClick={() => handleCategorySelect(null)}
+          >
+            כל הקטגוריות
+          </button>
           {displayCategories.map((category) => (
-            <div className={`media-category-card ${Number(category.id) === Number(activeCategoryId) ? "active" : ""}`} key={category.id}>
-              <button type="button" onClick={() => handleCategorySelect(category.id)}>
-                {category.name}
-              </button>
-            </div>
+            <button
+              key={category.id}
+              type="button"
+              className={`category-pill ${Number(category.id) === Number(activeCategoryId) ? "active" : ""}`}
+              onClick={() => handleCategorySelect(category.id)}
+            >
+              {category.name}
+            </button>
           ))}
-        </div>
+        </nav>
         {activeCategoryName && (
           <p className="form-helper">מציגים רק מוצרים מקטגוריית {activeCategoryName}. לחצו על "כל הקטגוריות" כדי לצאת.</p>
         )}
@@ -248,6 +289,7 @@ function Media() {
             displayedItems.map((item) => {
               const gallery = resolveGallery(item);
               const coverImage = gallery[0] || null;
+              const canAdd = getMaxPurchasable(item) > 0;
               return (
                 <article
                   key={item.id}
@@ -272,12 +314,13 @@ function Media() {
                       <p className="form-helper text-center">מחיר: ₪{Number(item.itemPriceILS).toFixed(2)}</p>
                     </div>
                     <button
+                      type="button"
                       onClick={() => {
-                        addToCart(item);
-                        openPopup(item);
+                        addToCart(item, 1);
                       }}
+                      disabled={!canAdd}
                     >
-                      הוספה לעגלה
+                      {canAdd ? "הוספה לעגלה" : "אזל מהמלאי"}
                     </button>
                   </div>
                 </article>
@@ -297,9 +340,17 @@ function Media() {
           <div className="media-modal stack">
             <h2>{popupItem.itemName}</h2>
             <p className="form-helper text-center">מחיר: ₪{Number(popupItem.itemPriceILS).toFixed(2)}</p>
-            <label className="stack" style={{ textAlign: "right" }}>
-              <span className="form-helper">בחרו כמות (עד {popupMax || 0} יחידות)</span>
+
+            {cartStatus.text && (
+              <p className={`alert ${cartStatus.type}`} role="status" aria-live="polite">
+                {cartStatus.text}
+              </p>
+            )}
+
+            <div className="field text-right">
+              <label htmlFor="popup-quantity" className="form-helper">בחרו כמות (עד {popupMax || 0} יחידות)</label>
               <input
+                id="popup-quantity"
                 type="number"
                 min="1"
                 max={popupMax}
@@ -307,7 +358,7 @@ function Media() {
                 disabled={popupMax === 0}
                 onChange={(event) => setPopupQuantity(clampQuantity(popupItem, event.target.value))}
               />
-            </label>
+            </div>
             <div className="media-gallery">
               {popupImageSrc ? (
                 <img
@@ -356,9 +407,9 @@ function Media() {
             </div>
             <div className="home-primary-actions">
               <button
+                type="button"
                 onClick={() => {
                   addToCart(popupItem, popupQuantity);
-                  closePopup();
                 }}
                 disabled={popupMax === 0}
               >

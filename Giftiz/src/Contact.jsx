@@ -43,15 +43,53 @@ function Contact() {
     return(
         <main className="page">
             <section className="surface stack">
-                <h1>צרו קשר</h1>
-                <p className="form-helper">יש לכם בקשת פיצ'ר או מצאתם באג? השאירו לנו הודעה ונחזור אליכם בהקדם.</p>
-                <form className="stack" onSubmit={handleSubmit}>
-                    <input type="text" placeholder="שם מלא" value={form.name} onChange={(e) => handleChange("name", e.target.value)} required />
-                    <input type="email" placeholder="דואר אלקטרוני" value={form.email} onChange={(e) => handleChange("email", e.target.value)} required />
-                    <textarea rows="4" placeholder="איך נוכל לעזור?" value={form.message} onChange={(e) => handleChange("message", e.target.value)} required />
-                    <button type="submit" disabled={sending}>{sending ? "שולח..." : "שליחת הודעה"}</button>
+                <div className="section-header">
+                    <h1>צרו קשר</h1>
+                    <p className="form-helper">יש לכם בקשת פיצ'ר או מצאתם באג? השאירו לנו הודעה ונחזור אליכם בהקדם.</p>
+                </div>
+
+                <form onSubmit={handleSubmit}>
+                    <div className="form-fields">
+                        <div className="field">
+                            <label htmlFor="contact-name">שם מלא</label>
+                            <input
+                                id="contact-name"
+                                type="text"
+                                placeholder="שם מלא"
+                                autoComplete="name"
+                                value={form.name}
+                                onChange={(e) => handleChange("name", e.target.value)}
+                                required
+                            />
+                        </div>
+                        <div className="field">
+                            <label htmlFor="contact-email">דואר אלקטרוני</label>
+                            <input
+                                id="contact-email"
+                                type="email"
+                                placeholder="דואר אלקטרוני"
+                                autoComplete="email"
+                                value={form.email}
+                                onChange={(e) => handleChange("email", e.target.value)}
+                                required
+                            />
+                        </div>
+                        <div className="field">
+                            <label htmlFor="contact-message">הודעה</label>
+                            <textarea
+                                id="contact-message"
+                                rows="5"
+                                placeholder="איך נוכל לעזור?"
+                                value={form.message}
+                                onChange={(e) => handleChange("message", e.target.value)}
+                                required
+                            />
+                        </div>
+                        <button type="submit" disabled={sending}>{sending ? "שולח..." : "שליחת הודעה"}</button>
+                    </div>
                 </form>
-                {status && <p>{status}</p>}
+
+                {status && <p className="alert info" role="status" aria-live="polite">{status}</p>}
                 <div className="nav-grid">
                     <button className="btn-ghost" onClick={() => navigate("/")}>חזרה לבית</button>
                 </div>

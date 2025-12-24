@@ -5,6 +5,7 @@ import { TRUSTED_DEVICE_STORAGE_KEY } from "./authStorage";
 function EmailLogin() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
+  const [pwd, setPwd] = useState("");
   const [emailLoginMessage, setEmailLoginMessage] = useState("");
   const [emailLoginTicketId, setEmailLoginTicketId] = useState("");
   const [emailLoginNeedsCode, setEmailLoginNeedsCode] = useState(false);
@@ -37,7 +38,7 @@ function EmailLogin() {
       const res = await fetch("http://localhost:3001/login-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, rememberDevice, trustedDeviceToken })
+        body: JSON.stringify({ email, pwd, rememberDevice, trustedDeviceToken })
       });
       const data = await res.json();
       setEmailLoginMessage(data.message);
@@ -70,7 +71,7 @@ function EmailLogin() {
       const res = await fetch("http://localhost:3001/login-email/verify-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticketId: emailLoginTicketId, code: emailLoginCode, rememberDevice })
+        body: JSON.stringify({ ticketId: emailLoginTicketId, code: emailLoginCode, pwd, rememberDevice })
       });
       const data = await res.json();
       setEmailLoginMessage(data.message);
@@ -110,6 +111,18 @@ function EmailLogin() {
               autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="email-login-password">סיסמה</label>
+            <input
+              id="email-login-password"
+              type="password"
+              placeholder="סיסמה"
+              autoComplete="current-password"
+              value={pwd}
+              onChange={(e) => setPwd(e.target.value)}
             />
           </div>
 

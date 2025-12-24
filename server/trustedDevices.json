@@ -7,5 +7,14 @@
     "lastUsedAt": 1766489724860,
     "expiresAt": 1774265724860,
     "label": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
+  },
+  {
+    "id": "53fa9209-aa15-43d9-87ce-5846c3e18fbd",
+    "userId": 1,
+    "tokenHash": "9650071362d5b15683873d2869fa9846ad6d8acb1783c689418b507160ec7a3f",
+    "createdAt": 1766566829616,
+    "lastUsedAt": 1766566829616,
+    "expiresAt": 1774342829616,
+    "label": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
   }
 ]
