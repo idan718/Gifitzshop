@@ -47,6 +47,7 @@ function Admin() {
                     <button onClick={() => navigate("/")}>חזרה לבית</button>
                     <button onClick={() => navigate("/admin/inventory")}>ניהול מלאי</button>
                     <button className="btn-ghost" onClick={() => navigate("/support")}>תמיכה</button>
+                       <button onClick={() => navigate("/admin/orders")}>הזמנות</button>
                     {isOwner && (
                         <button onClick={() => navigate("/owner")}>קונסולת בעלים</button>
                         

@@ -89,8 +89,8 @@ function Checkout() {
     <main className="page">
       <section className="surface stack checkout-panel">
         <h2>קופה</h2>
-        {status && <p>{status}</p>}
-        {loading && <p>טוען סיכום...</p>}
+        {status && <p className="alert info" role="status" aria-live="polite">{status}</p>}
+        {loading && <p className="alert info" role="status" aria-live="polite">טוען סיכום...</p>}
 
         {cartItems.length > 0 && (
           <div className="stack">
@@ -197,7 +197,7 @@ function CheckoutForm({ sessionId, amountILS, onSuccess }) {
   return (
     <form onSubmit={handleSubmit} className="stack">
       <PaymentElement onReady={() => { setErrorMessage(""); setPaymentReady(true); }} />
-      {errorMessage && <p>{errorMessage}</p>}
+      {errorMessage && <p className="alert error" role="status" aria-live="polite">{errorMessage}</p>}
       <button type="submit" disabled={!stripe || processing || !paymentReady}>
         {processing ? "מעבד..." : paymentReady ? `שלמו ₪${amountILS.toFixed(2)}` : "טוען טופס תשלום..."}
       </button>

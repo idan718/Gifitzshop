@@ -18,14 +18,28 @@ app.set('trust proxy', 1);
 // Database file path
 const DB_PATH = path.join(__dirname, 'DB.json');
 const SESSIONS_PATH = path.join(__dirname, 'sessions.json');
-const INVENTORY_PATH = path.join(__dirname, 'inventory.json');
+const INVENTORY_PATH = (() => {
+  const lower = path.join(__dirname, 'inventory.json');
+  const upper = path.join(__dirname, 'Inventory.json');
+  if (fs.existsSync(lower)) {
+    return lower;
+  }
+  if (fs.existsSync(upper)) {
+    return upper;
+  }
+  return lower;
+})();
 const PURCHASES_PATH = path.join(__dirname, 'purchases.json');
 const LOGIN_TICKETS_PATH = path.join(__dirname, 'loginTickets.json');
+const TRUSTED_DEVICES_PATH = path.join(__dirname, 'trustedDevices.json');
 const CATEGORIES_PATH = path.join(__dirname, 'categories.json');
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours of inactivity invalidates a session
 const SESSION_CLOSE_GRACE_MS = Number(process.env.SESSION_CLOSE_GRACE_MS || 15_000);
 const LOGIN_CODE_TTL_MS = Number(process.env.LOGIN_CODE_TTL_MS || 10 * 60 * 1000);
 const MAX_SESSIONS_PER_USER = Number(process.env.MAX_SESSIONS_PER_USER || 1);
+const TRUSTED_DEVICE_TTL_MS = Number(process.env.TRUSTED_DEVICE_TTL_MS || 90 * 24 * 60 * 60 * 1000);
+const MAX_TRUSTED_DEVICES_PER_USER = Number(process.env.MAX_TRUSTED_DEVICES_PER_USER || 5);
+const TRUSTED_DEVICE_SALT = process.env.TRUSTED_DEVICE_SALT || 'giftiz-trusted-device-salt';
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || 'sk_test_51RMLa82flqUWGmzSnvstRo7chn6psJfPMd45jLTQxpMuz52oMsA3x5ih9AdSWMtK2rYwW1AXUgjNtZOoApabg4X100UUTJa55A';
 const STRIPE_PUBLISHABLE_KEY = process.env.STRIPE_PUBLISHABLE_KEY || 'pk_test_51RMLa82flqUWGmzS8X8Q118uzFbXmbsOPVpg9JygBIDMvloAoXpj2oCrs24sVWiVi4JaWidGLU9pNG3SoxRKuVnO00ex2sdStm';
 const stripe = new Stripe(STRIPE_SECRET_KEY);
@@ -100,6 +114,7 @@ ensureFile(INVENTORY_PATH, []);
 ensureFile(SESSIONS_PATH, []);
 ensureFile(PURCHASES_PATH, []);
 ensureFile(LOGIN_TICKETS_PATH, []);
+ensureFile(TRUSTED_DEVICES_PATH, []);
 ensureFile(CATEGORIES_PATH, []);
 
 function readJSON(filePath, fallback = []) {
@@ -143,6 +158,10 @@ function loadPurchases() {
   return readJSON(PURCHASES_PATH, []);
 }
 
+function savePurchases(purchases) {
+  writeJSON(PURCHASES_PATH, purchases);
+}
+
 function loadCategories() {
   return readJSON(CATEGORIES_PATH, []);
 }
@@ -157,6 +176,27 @@ function loadLoginTickets() {
 
 function saveLoginTickets(tickets) {
   writeJSON(LOGIN_TICKETS_PATH, tickets);
+}
+
+function loadTrustedDevices() {
+  return readJSON(TRUSTED_DEVICES_PATH, []);
+}
+
+function saveTrustedDevices(devices) {
+  writeJSON(TRUSTED_DEVICES_PATH, devices);
+}
+
+function getTrustedDevices() {
+  const devices = loadTrustedDevices();
+  if (!devices.length) {
+    return devices;
+  }
+  const now = Date.now();
+  const fresh = devices.filter((device) => !device.expiresAt || now <= device.expiresAt);
+  if (fresh.length !== devices.length) {
+    saveTrustedDevices(fresh);
+  }
+  return fresh;
 }
 
 function sanitizeText(value) {
@@ -493,7 +533,7 @@ function markSessionClosing(sessionId, graceMs = SESSION_CLOSE_GRACE_MS) {
   return wrapper.session;
 }
 
-function createLoginTicket({ userId, code, admin, owner, method }) {
+function createLoginTicket({ userId, code, admin, owner, method, rememberDevice = false, deviceLabel = null }) {
   const tickets = loadLoginTickets().filter(
     (ticket) => !(String(ticket.userId) === String(userId) && ticket.method === method)
   );
@@ -509,7 +549,9 @@ function createLoginTicket({ userId, code, admin, owner, method }) {
     createdAt,
     createdAtHuman: formatHumanTimestamp(createdAt),
     expiresAt,
-    expiresAtHuman: formatHumanTimestamp(expiresAt)
+    expiresAtHuman: formatHumanTimestamp(expiresAt),
+    rememberDevice: Boolean(rememberDevice),
+    deviceLabel: getSafeText(deviceLabel) || null
   };
   tickets.push(ticket);
   saveLoginTickets(tickets);
@@ -555,6 +597,80 @@ function purgeExpiredLoginTickets() {
   if (fresh.length !== tickets.length) {
     saveLoginTickets(fresh);
   }
+}
+
+function hashTrustedDeviceToken(rawToken) {
+  return crypto.createHash('sha256').update(String(rawToken) + TRUSTED_DEVICE_SALT).digest('hex');
+}
+
+function generateTrustedDeviceToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+function createTrustedDeviceForUser(userId, { label } = {}) {
+  if (!userId) {
+    return null;
+  }
+  let devices = getTrustedDevices();
+  const perUser = devices.filter((device) => String(device.userId) === String(userId));
+  if (perUser.length >= MAX_TRUSTED_DEVICES_PER_USER) {
+    const sorted = [...perUser].sort((a, b) => (a.lastUsedAt || a.createdAt || 0) - (b.lastUsedAt || b.createdAt || 0));
+    const oldest = sorted[0];
+    devices = devices.filter((device) => device.id !== oldest.id);
+  }
+  const issuedAt = Date.now();
+  const token = generateTrustedDeviceToken();
+  const device = {
+    id: generateSessionId(),
+    userId,
+    tokenHash: hashTrustedDeviceToken(token),
+    createdAt: issuedAt,
+    lastUsedAt: issuedAt,
+    expiresAt: issuedAt + TRUSTED_DEVICE_TTL_MS,
+    label: getSafeText(label) || 'מכשיר זה'
+  };
+  devices.push(device);
+  saveTrustedDevices(devices);
+  return { device, token };
+}
+
+function findTrustedDeviceByToken(rawToken) {
+  const safeToken = sanitizeText(rawToken);
+  if (!safeToken) {
+    return null;
+  }
+  const devices = getTrustedDevices();
+  const tokenHash = hashTrustedDeviceToken(safeToken);
+  const index = devices.findIndex((entry) => entry.tokenHash === tokenHash);
+  if (index === -1) {
+    return null;
+  }
+  return { device: devices[index], devices, index };
+}
+
+function refreshTrustedDevice(foundDevice) {
+  if (!foundDevice) {
+    return null;
+  }
+  const { device, devices, index } = foundDevice;
+  if (!device || !devices || index < 0) {
+    return null;
+  }
+  const now = Date.now();
+  const token = generateTrustedDeviceToken();
+  const updated = {
+    ...device,
+    tokenHash: hashTrustedDeviceToken(token),
+    lastUsedAt: now,
+    expiresAt: now + TRUSTED_DEVICE_TTL_MS
+  };
+  devices[index] = updated;
+  saveTrustedDevices(devices);
+  return { device: updated, token };
+}
+
+function purgeExpiredTrustedDevices() {
+  getTrustedDevices();
 }
 
 function requireAdminSession(req, res) {
@@ -617,6 +733,7 @@ function cleanupSessions() {
 setInterval(() => {
   cleanupSessions();
   purgeExpiredLoginTickets();
+  purgeExpiredTrustedDevices();
 }, 15 * 1000);
 
 function normalizeCartItems(cart) {
@@ -639,6 +756,52 @@ function normalizeCartItems(cart) {
     };
   });
   return { items, total };
+}
+
+function summarizePurchasedQuantities(items) {
+  const totals = new Map();
+  for (const entry of items || []) {
+    const id = getSafeText(entry?.id);
+    const qtyRaw = Number(entry?.quantity);
+    const qty = Number.isFinite(qtyRaw) ? Math.floor(qtyRaw) : 0;
+    if (!id || qty <= 0) {
+      continue;
+    }
+    totals.set(String(id), (totals.get(String(id)) || 0) + qty);
+  }
+  return Array.from(totals.entries()).map(([id, quantity]) => ({ id, quantity }));
+}
+
+function decrementInventoryForPurchaseItems(purchasedItems) {
+  const deltas = summarizePurchasedQuantities(purchasedItems);
+  if (deltas.length === 0) {
+    return { changed: false, missingIds: [] };
+  }
+
+  const inventory = loadInventory();
+  const missingIds = [];
+  let changed = false;
+
+  for (const { id, quantity } of deltas) {
+    const product = inventory.find((item) => String(item?.id) === String(id));
+    if (!product) {
+      missingIds.push(id);
+      continue;
+    }
+    const currentRaw = Number(product.itemQuantity);
+    const current = Number.isFinite(currentRaw) ? Math.max(0, Math.floor(currentRaw)) : 0;
+    const next = Math.max(0, current - quantity);
+    if (next !== current) {
+      product.itemQuantity = next;
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    saveInventory(inventory);
+  }
+
+  return { changed, missingIds };
 }
 
 // Nodemailer email sender
@@ -893,7 +1056,10 @@ app.post('/verify', authLimiter, (req, res) => {
 
 // login endpoint
 app.post('/login', authLimiter, async (req, res) => {
-  const { name, pwd } = req.body;
+  const { name, pwd, rememberDevice, trustedDeviceToken } = req.body || {};
+  const rememberDeviceFlag = Boolean(rememberDevice);
+  const clientDeviceLabel = sanitizeText(req.headers['user-agent'] || '').slice(0, 80);
+  let trustedDeviceRejected = false;
 
   if (!validateRequiredFields([
     { value: name, name: 'Name' },
@@ -932,6 +1098,27 @@ app.post('/login', authLimiter, async (req, res) => {
       return res.status(500).json({ message: 'User email is invalid.' });
     }
 
+    if (trustedDeviceToken) {
+      const trustedDevice = findTrustedDeviceByToken(trustedDeviceToken);
+      if (trustedDevice && String(trustedDevice.device.userId) === String(user.id)) {
+        const refreshed = refreshTrustedDevice(trustedDevice);
+        const session = createSession(user.id, {
+          admin: Boolean(user.admin),
+          owner: Boolean(user.owner),
+          loggedIn: true
+        });
+        return res.status(200).json({
+          message: 'התחברתם בהצלחה מהמכשיר ששמרתם.',
+          sessionId: session.id,
+          userId: session.userId,
+          admin: Boolean(session.admin),
+          owner: Boolean(session.owner),
+          trustedDeviceToken: refreshed?.token || null
+        });
+      }
+      trustedDeviceRejected = true;
+    }
+
     const loginCode = String(Math.floor(100000 + Math.random() * 900000));
     try {
       await transporter.sendMail({
@@ -950,19 +1137,22 @@ app.post('/login', authLimiter, async (req, res) => {
       code: loginCode,
       admin: Boolean(user.admin),
       owner: Boolean(user.owner),
-      method: 'password'
+      method: 'password',
+      rememberDevice: rememberDeviceFlag,
+      deviceLabel: clientDeviceLabel
     });
 
     return res.status(200).json({
       message: 'קוד האימות נשלח אליכם. הזינו אותו כדי להשלים את ההתחברות.',
       ticketId: ticket.id,
-      requiresLoginCode: true
+      requiresLoginCode: true,
+      trustedDeviceRejected
     });
   });
 });
 
 app.post('/login/verify-code', authLimiter, (req, res) => {
-  const { ticketId, code } = req.body || {};
+  const { ticketId, code, rememberDevice } = req.body || {};
   if (!ticketId || !code) {
     return res.status(400).json({ message: 'נדרש מזהה אסימון וקוד אימות.' });
   }
@@ -990,6 +1180,19 @@ app.post('/login/verify-code', authLimiter, (req, res) => {
     return res.status(500).json({ message: 'שגיאת התחברות לא צפויה.' });
   }
 
+  const wantsTrustedDevice = typeof rememberDevice === 'boolean'
+    ? rememberDevice
+    : Boolean(ticket.rememberDevice);
+  let trustedDeviceToken = null;
+  if (wantsTrustedDevice) {
+    try {
+      const deviceResult = createTrustedDeviceForUser(ticket.userId, { label: ticket.deviceLabel });
+      trustedDeviceToken = deviceResult?.token || null;
+    } catch (error) {
+      console.error('Failed to persist trusted device', error);
+    }
+  }
+
   const session = createSession(ticket.userId, {
     admin: Boolean(ticket.admin),
     owner: Boolean(ticket.owner),
@@ -1001,14 +1204,19 @@ app.post('/login/verify-code', authLimiter, (req, res) => {
     sessionId: session.id,
     userId: session.userId,
     admin: Boolean(session.admin),
-    owner: Boolean(session.owner)
+    owner: Boolean(session.owner),
+    trustedDeviceToken
   });
 });
 
 app.post('/login-email', authLimiter, async (req, res) => {
-  const { email } = req.body || {};
+  const { email, pwd, rememberDevice, trustedDeviceToken } = req.body || {};
+  const rememberDeviceFlag = Boolean(rememberDevice);
+  const clientDeviceLabel = sanitizeText(req.headers['user-agent'] || '').slice(0, 80);
+  let trustedDeviceRejected = false;
   if (!validateRequiredFields([
-    { value: email, name: 'Email', type: 'email' }
+    { value: email, name: 'Email', type: 'email' },
+    { value: pwd, name: 'Password', type: 'password' }
   ], res)) {
     return;
   }
@@ -1021,6 +1229,33 @@ app.post('/login-email', authLimiter, async (req, res) => {
   }
   if (!user.verified) {
     return res.status(403).json({ message: 'החשבון עדיין לא אומת. אנא השלימו תהליך הרשמה.' });
+  }
+
+  const normalizedPassword = typeof pwd === 'string' ? pwd.trim() : String(pwd ?? '');
+  const match = await bcrypt.compare(normalizedPassword, user.pwd);
+  if (!match) {
+    return res.status(401).json({ message: 'פרטי התחברות שגויים.' });
+  }
+
+  if (trustedDeviceToken) {
+    const trustedDevice = findTrustedDeviceByToken(trustedDeviceToken);
+    if (trustedDevice && String(trustedDevice.device.userId) === String(user.id)) {
+      const refreshed = refreshTrustedDevice(trustedDevice);
+      const session = createSession(user.id, {
+        admin: Boolean(user.admin),
+        owner: Boolean(user.owner),
+        loggedIn: true
+      });
+      return res.status(200).json({
+        message: 'התחברתם בהצלחה מהמכשיר ששמרתם.',
+        sessionId: session.id,
+        userId: session.userId,
+        admin: Boolean(session.admin),
+        owner: Boolean(session.owner),
+        trustedDeviceToken: refreshed?.token || null
+      });
+    }
+    trustedDeviceRejected = true;
   }
 
   const loginCode = String(Math.floor(100000 + Math.random() * 900000));
@@ -1041,57 +1276,146 @@ app.post('/login-email', authLimiter, async (req, res) => {
     code: loginCode,
     admin: Boolean(user.admin),
     owner: Boolean(user.owner),
-    method: 'email'
+    method: 'email',
+    rememberDevice: rememberDeviceFlag,
+    deviceLabel: clientDeviceLabel
   });
 
   return res.status(200).json({
     message: 'קוד אימות נשלח למייל. הזינו אותו כדי להשלים את ההתחברות.',
     ticketId: ticket.id,
-    requiresEmailCode: true
+    requiresEmailCode: true,
+    trustedDeviceRejected
   });
 });
 
 app.post('/login-email/verify-code', authLimiter, (req, res) => {
-  const { ticketId, code } = req.body || {};
-  if (!ticketId || !code) {
-    return res.status(400).json({ message: 'נדרש מזהה אסימון וקוד אימות.' });
+  const { ticketId, code, pwd, rememberDevice } = req.body || {};
+  if (!validateRequiredFields([
+    { value: ticketId, name: 'Ticket ID' },
+    { value: code, name: 'Verification code' },
+    { value: pwd, name: 'Password', type: 'password' }
+  ], res)) {
+    return;
   }
 
-  const result = consumeLoginTicket(ticketId, code, 'email');
-  switch (result.status) {
-    case 'invalid':
-      return res.status(400).json({ message: 'הבקשה אינה תקינה.' });
-    case 'not_found':
-      return res.status(404).json({ message: 'הבקשה לא נמצאה או שפג תוקפה.' });
-    case 'method_mismatch':
-      return res.status(400).json({ message: 'סוג ההתחברות אינו תואם.' });
-    case 'expired':
-      return res.status(410).json({ message: 'תוקף קוד האימות פג. נסו שוב.' });
-    case 'mismatch':
-      return res.status(400).json({ message: 'קוד האימות שגוי.' });
-    case 'ok':
-      break;
-    default:
+  const safeTicketId = getSafeText(ticketId);
+  const normalizedCode = sanitizeText(String(code ?? ''));
+  if (!safeTicketId || !normalizedCode) {
+    return res.status(400).json({ message: 'הבקשה אינה תקינה.' });
+  }
+
+  const tickets = loadLoginTickets();
+  const index = tickets.findIndex((entry) => entry.id === safeTicketId);
+  if (index === -1) {
+    return res.status(404).json({ message: 'הבקשה לא נמצאה או שפג תוקפה.' });
+  }
+
+  const ticket = tickets[index];
+  if (ticket.method !== 'email') {
+    return res.status(400).json({ message: 'סוג ההתחברות אינו תואם.' });
+  }
+
+  const now = Date.now();
+  if (ticket.expiresAt && now > ticket.expiresAt) {
+    tickets.splice(index, 1);
+    saveLoginTickets(tickets);
+    return res.status(410).json({ message: 'תוקף קוד האימות פג. נסו שוב.' });
+  }
+
+  if (String(ticket.code) !== normalizedCode) {
+    return res.status(400).json({ message: 'קוד האימות שגוי.' });
+  }
+
+  const users = loadUsers();
+  const user = users.find((entry) => String(entry.id) === String(ticket.userId));
+  if (!user) {
+    return res.status(404).json({ message: 'הבקשה לא נמצאה או שפג תוקפה.' });
+  }
+  if (!user.verified) {
+    return res.status(403).json({ message: 'החשבון עדיין לא אומת. אנא השלימו תהליך הרשמה.' });
+  }
+
+  const normalizedPassword = typeof pwd === 'string' ? pwd.trim() : String(pwd ?? '');
+  bcrypt.compare(normalizedPassword, user.pwd)
+    .then((match) => {
+      if (!match) {
+        return res.status(401).json({ message: 'פרטי התחברות שגויים.' });
+      }
+
+      tickets.splice(index, 1);
+      saveLoginTickets(tickets);
+
+      const wantsTrustedDevice = typeof rememberDevice === 'boolean'
+        ? rememberDevice
+        : Boolean(ticket.rememberDevice);
+      let trustedDeviceToken = null;
+      if (wantsTrustedDevice) {
+        try {
+          const deviceResult = createTrustedDeviceForUser(ticket.userId, { label: ticket.deviceLabel });
+          trustedDeviceToken = deviceResult?.token || null;
+        } catch (error) {
+          console.error('Failed to persist trusted device (email)', error);
+        }
+      }
+
+      const session = createSession(ticket.userId, {
+        admin: Boolean(ticket.admin),
+        owner: Boolean(ticket.owner),
+        loggedIn: true
+      });
+
+      return res.status(200).json({
+        message: 'התחברות הושלמה בהצלחה.',
+        sessionId: session.id,
+        userId: session.userId,
+        admin: Boolean(session.admin),
+        owner: Boolean(session.owner),
+        trustedDeviceToken
+      });
+    })
+    .catch((error) => {
+      console.error('Email login password check failed', error);
       return res.status(500).json({ message: 'שגיאת התחברות לא צפויה.' });
+    });
+
+  return;
+});
+
+app.post('/login/trusted', authLimiter, (req, res) => {
+  const { token } = req.body || {};
+  if (!token) {
+    return res.status(400).json({ message: 'נדרש אסימון מכשיר כדי להתחבר אוטומטית.' });
   }
 
-  const ticket = result.ticket;
-  if (!ticket) {
-    return res.status(500).json({ message: 'שגיאת התחברות לא צפויה.' });
+  const trustedDevice = findTrustedDeviceByToken(token);
+  if (!trustedDevice) {
+    return res.status(404).json({ message: 'אסימון המכשיר לא זוהה.' });
   }
 
-  const session = createSession(ticket.userId, {
-    admin: Boolean(ticket.admin),
-    owner: Boolean(ticket.owner),
+  const users = loadUsers();
+  const user = users.find((entry) => String(entry.id) === String(trustedDevice.device.userId));
+  if (!user || !user.verified) {
+    trustedDevice.devices.splice(trustedDevice.index, 1);
+    saveTrustedDevices(trustedDevice.devices);
+    return res.status(404).json({ message: 'אסימון המכשיר אינו תקף עוד.' });
+  }
+
+  const session = createSession(user.id, {
+    admin: Boolean(user.admin),
+    owner: Boolean(user.owner),
     loggedIn: true
   });
 
+  const refreshed = refreshTrustedDevice(trustedDevice);
+
   return res.status(200).json({
-    message: 'התחברות הושלמה בהצלחה.',
+    message: 'התחברתם בהצלחה מהמכשיר ששמרתם.',
     sessionId: session.id,
     userId: session.userId,
     admin: Boolean(session.admin),
-    owner: Boolean(session.owner)
+    owner: Boolean(session.owner),
+    trustedDeviceToken: refreshed?.token || null
   });
 });
 
@@ -1756,13 +2080,27 @@ app.post('/checkout/complete', async (req, res) => {
       return res.status(400).json({ message: 'Payment not completed' });
     }
 
+    const purchases = loadPurchases();
+    const existingPurchase = purchases.find((purchase) => String(purchase?.paymentIntentId) === String(safePaymentIntentId));
+    if (existingPurchase) {
+      if (!existingPurchase.inventoryAdjusted) {
+        const adjustment = decrementInventoryForPurchaseItems(existingPurchase.items || []);
+        existingPurchase.inventoryAdjusted = true;
+        existingPurchase.inventoryAdjustedAt = new Date().toISOString();
+        if (adjustment.missingIds.length) {
+          existingPurchase.inventoryWarnings = { missingIds: adjustment.missingIds };
+        }
+        savePurchases(purchases);
+      }
+      return res.status(200).json({ message: 'Purchase already recorded', purchase: existingPurchase });
+    }
+
     const { session } = wrapper;
     const { items, total } = normalizeCartItems(session.cart);
     if (total <= 0) {
       return res.status(400).json({ message: 'Cart is empty' });
     }
 
-    const purchases = loadPurchases();
     const purchaseId = purchases.length === 0 ? 1 : purchases[purchases.length - 1].id + 1;
     const users = readJSON(DB_PATH, []);
     const user = users.find((u) => u.id === session.userId);
@@ -1775,12 +2113,24 @@ app.post('/checkout/complete', async (req, res) => {
       paymentIntentId: safePaymentIntentId,
       items,
       totalILS: total,
+      status: 'pending',
+      statusUpdatedAt: new Date(purchaseCreatedAt).toISOString(),
       createdAt: new Date(purchaseCreatedAt).toISOString(),
-      createdAtHuman: formatHumanTimestamp(purchaseCreatedAt)
+      createdAtHuman: formatHumanTimestamp(purchaseCreatedAt),
+      inventoryAdjusted: false,
+      inventoryAdjustedAt: null
     };
 
     purchases.push(newPurchase);
-    writeJSON(PURCHASES_PATH, purchases);
+    savePurchases(purchases);
+
+    const adjustment = decrementInventoryForPurchaseItems(items);
+    newPurchase.inventoryAdjusted = true;
+    newPurchase.inventoryAdjustedAt = new Date().toISOString();
+    if (adjustment.missingIds.length) {
+      newPurchase.inventoryWarnings = { missingIds: adjustment.missingIds };
+    }
+    savePurchases(purchases);
 
     const itemLines = items
       .map((entry) => `${entry.quantity || 0}× ${entry.name || 'פריט'} – ₪${Number(entry.priceILS || 0).toFixed(2)}`)
@@ -1788,16 +2138,8 @@ app.post('/checkout/complete', async (req, res) => {
     const purchaserEmail = user?.userEmail || 'משתמש לא ידוע';
     const purchaseSummary = `מספר הזמנה: ${purchaseId}\nמשתמש: ${purchaserEmail}\nנרשם בתאריך: ${newPurchase.createdAtHuman || newPurchase.createdAt}\nסכום כולל: ₪${total.toFixed(2)}\n\nפריטים:\n${itemLines}`;
 
-    try {
-      await transporter.sendMail({
-        from: 'sales@giftiz.com',
-        to: 'giftizpurches@gmail.com',
-        subject: 'Giftiz - רכישה חדשה באתר',
-        text: purchaseSummary
-      });
-    } catch (emailErr) {
-      console.error('Failed to send purchase summary email', emailErr);
-    }
+    // Intentionally do not send an email notification to the store on new purchases.
+    // Orders are stored in purchases.json and visible in the admin orders view.
 
     session.cart = [];
     touchSession(wrapper);
@@ -1807,6 +2149,109 @@ app.post('/checkout/complete', async (req, res) => {
     console.error('Error completing checkout', error);
     return res.status(500).json({ message: 'Failed to finalize purchase' });
   }
+});
+
+app.get('/orders/my', (req, res) => {
+  const sessionId = getSessionIdFromRequest(req);
+  if (!sessionId) {
+    return res.status(401).json({ message: 'Session ID is required' });
+  }
+  const wrapper = getSession(sessionId);
+  if (!wrapper || !wrapper.session.loggedIn) {
+    return res.status(401).json({ message: 'Session not found or expired' });
+  }
+
+  const purchases = loadPurchases();
+  const userOrders = purchases
+    .filter((order) => Number(order.userId) === Number(wrapper.session.userId) && order.status !== 'deleted')
+    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+  touchSession(wrapper);
+  return res.status(200).json({ orders: userOrders });
+});
+
+app.get('/admin/orders', (req, res) => {
+  const wrapper = requireAdminSession(req, res);
+  if (!wrapper) {
+    return;
+  }
+
+  const purchases = loadPurchases();
+  const openOrders = purchases
+    .filter((order) => order.status !== 'ready' && order.status !== 'deleted')
+    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+  touchSession(wrapper);
+  return res.status(200).json({ orders: openOrders });
+});
+
+app.patch('/admin/orders/:orderId/ready', async (req, res) => {
+  const wrapper = requireAdminSession(req, res);
+  if (!wrapper) {
+    return;
+  }
+
+  const orderId = Number(req.params.orderId);
+  if (!Number.isInteger(orderId)) {
+    return res.status(400).json({ message: 'Order id is invalid.' });
+  }
+
+  const purchases = loadPurchases();
+  const index = purchases.findIndex((order) => Number(order.id) === orderId);
+  if (index === -1) {
+    return res.status(404).json({ message: 'Order not found.' });
+  }
+
+  const now = Date.now();
+  const updated = {
+    ...purchases[index],
+    status: 'ready',
+    readyAt: new Date(now).toISOString(),
+    readyAtHuman: formatHumanTimestamp(now),
+    statusUpdatedAt: new Date(now).toISOString()
+  };
+  purchases[index] = updated;
+  savePurchases(purchases);
+
+  const recipient = sanitizeText(updated.userEmail);
+  if (recipient && EMAIL_PATTERN.test(recipient)) {
+    try {
+      await transporter.sendMail({
+        from: 'sales@giftiz.com',
+        to: recipient,
+        subject: 'Giftiz - ההזמנה שלכם מוכנה',
+        text: `שלום!\n\nההזמנה מספר ${updated.id} מוכנה לאיסוף/משלוח.\nסטטוס: מוכנה\nתאריך הזמנה: ${updated.createdAtHuman || updated.createdAt}\n\nתודה שקניתם ב-Giftiz!`
+      });
+    } catch (emailErr) {
+      console.error('Failed to send order-ready email', emailErr);
+    }
+  }
+
+  touchSession(wrapper);
+  return res.status(200).json({ message: 'Order marked as ready', order: updated });
+});
+
+app.delete('/admin/orders/:orderId', (req, res) => {
+  const wrapper = requireAdminSession(req, res);
+  if (!wrapper) {
+    return;
+  }
+
+  const orderId = Number(req.params.orderId);
+  if (!Number.isInteger(orderId)) {
+    return res.status(400).json({ message: 'Order id is invalid.' });
+  }
+
+  const purchases = loadPurchases();
+  const index = purchases.findIndex((order) => Number(order.id) === orderId);
+  if (index === -1) {
+    return res.status(404).json({ message: 'Order not found.' });
+  }
+
+  const [removed] = purchases.splice(index, 1);
+  savePurchases(purchases);
+  touchSession(wrapper);
+  return res.status(200).json({ message: 'Order deleted', order: removed });
 });
 
 app.get('/config/stripe', (req, res) => {

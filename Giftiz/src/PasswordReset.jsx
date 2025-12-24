@@ -49,23 +49,40 @@ function PasswordReset() {
   return (
     <main className="page">
       <section className="surface stack">
-        <h2>הגדרת סיסמה חדשה</h2>
-        <input
-          type="password"
-          placeholder="סיסמה חדשה"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-        <input
-          type="password"
-          placeholder="אימות סיסמה"
-          value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
-        />
-        <button onClick={submitReset} disabled={loading}>
-          {loading ? "מעדכן..." : "שמירת סיסמה"}
-        </button>
-        {status && <p>{status}</p>}
+        <div className="section-header">
+          <h2>הגדרת סיסמה חדשה</h2>
+          <p className="form-helper">בחרו סיסמה חדשה לחשבון שלכם.</p>
+        </div>
+
+        <div className="form-fields">
+          <div className="field">
+            <label htmlFor="reset-password">סיסמה חדשה</label>
+            <input
+              id="reset-password"
+              type="password"
+              placeholder="סיסמה חדשה"
+              autoComplete="new-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="reset-confirm">אימות סיסמה</label>
+            <input
+              id="reset-confirm"
+              type="password"
+              placeholder="אימות סיסמה"
+              autoComplete="new-password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+            />
+          </div>
+          <button onClick={submitReset} disabled={loading}>
+            {loading ? "מעדכן..." : "שמירת סיסמה"}
+          </button>
+        </div>
+
+        {status && <p className="alert info" role="status" aria-live="polite">{status}</p>}
       </section>
     </main>
   );

@@ -19,7 +19,7 @@ function registerSessionHeartbeat() {
       heartbeatTimer = null;
     }
   };
-
+  
   const expireSessionLocally = () => {
     localStorage.removeItem("sessionId");
     stopHeartbeat();

@@ -22,11 +22,31 @@
   --brand-rose-soft: #fde7da;
   --brand-rose-dark: #a64d34;
   --brand-chocolate: #5a3c2e;
+  --brand-honey: #c9934a;
+  --shadow-soft: 0 24px 60px rgba(90, 60, 46, 0.14);
+  --shadow-lift: 0 30px 70px rgba(90, 60, 46, 0.18);
+  --focus-ring: 0 0 0 3px rgba(217, 118, 82, 0.22);
   --radius-xl: 32px;
   --radius-lg: 26px;
   --radius-md: 14px;
+  --radius-sm: 10px;
   --radius-pill: 999px;
   --heading-font: "Playfair Display", "Georgia", serif;
+
+  --paper-noise: repeating-linear-gradient(
+      0deg,
+      rgba(90, 60, 46, 0.018) 0px,
+      rgba(90, 60, 46, 0.018) 1px,
+      transparent 1px,
+      transparent 6px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(90, 60, 46, 0.012) 0px,
+      rgba(90, 60, 46, 0.012) 1px,
+      transparent 1px,
+      transparent 8px
+    );
 }
 
 *, *::before, *::after {
@@ -38,12 +58,30 @@ body {
   min-height: 100vh;
   background: var(--bg);
   color: var(--text-primary);
-  background-image: var(--bg-gradient);
+  background-image: var(--paper-noise), var(--bg-gradient);
 }
 
 #root {
   min-height: 100vh;
-  background: var(--bg-gradient);
+  background: transparent;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--heading-font);
+  color: var(--brand-chocolate);
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 img {

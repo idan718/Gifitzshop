@@ -66,8 +66,8 @@ export default function Cart() {
     <main className="page">
       <section className="surface stack">
         <h2>העגלה שלכם</h2>
-        {message && <p>{message}</p>}
-        {isLoading && <p>טוען...</p>}
+        {message && <p className="alert info" role="status" aria-live="polite">{message}</p>}
+        {isLoading && <p className="alert info" role="status" aria-live="polite">טוען...</p>}
         {cart.length === 0 ? (
           <p className="empty-state">העגלה ריקה</p>
         ) : (
@@ -104,6 +104,11 @@ export default function Cart() {
             >
               המשך לתשלום
             </button>
+
+            <div className="cta-row">
+              <button type="button" className="btn-ghost" onClick={() => navigate("/media")}>המשך קנייה</button>
+              <button type="button" className="btn-ghost" onClick={() => navigate("/")}>חזרה לבית</button>
+            </div>
           </>
         )}
       </section>

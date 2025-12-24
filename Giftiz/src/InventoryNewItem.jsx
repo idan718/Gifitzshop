@@ -249,7 +249,7 @@ function InventoryNewItem() {
             />
             {form.images.length > 0 && (
               <>
-                <div className="image-preview-grid">
+                <div className="image-chip-grid">
                   {form.images.map((src, index) => (
                     <div className="image-chip" key={`new-item-${index}`}>
                       <img src={src} alt={`תמונה ${index + 1}`} />
@@ -261,6 +261,19 @@ function InventoryNewItem() {
                       </button>
                     </div>
                   ))}
+
+                  {form.images.length < MAX_IMAGES_PER_ITEM ? (
+                    <button
+                      type="button"
+                      className="image-chip add-chip"
+                      onClick={() => fileInputRef.current?.click()}
+                      aria-label="הוספת תמונה נוספת"
+                      disabled={disableForm}
+                      title="הוספת תמונה נוספת"
+                    >
+                      +
+                    </button>
+                  ) : null}
                 </div>
                 <button type="button" className="btn-ghost" onClick={clearImages}>
                   הסרת כל התמונות
